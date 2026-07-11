@@ -171,6 +171,31 @@
   .estimate .nums{font-size:11.5px;color:var(--ink-dim);margin-top:5px;line-height:1.5;}
   .estimate .tag{font-size:10px;color:var(--ink-faint);margin-top:6px;letter-spacing:.03em;}
   .estimate .x{position:absolute;top:7px;right:12px;color:var(--ink-faint);font-size:14px;cursor:pointer;line-height:1;}
+  /* 종국 결과 바 (반상 안 가림) */
+  .result-bar{
+    position:fixed; left:50%; bottom:calc(96px + var(--safe-b));
+    transform:translateX(-50%) translateY(12px);
+    width:calc(100% - 24px); max-width:460px;
+    background:linear-gradient(180deg,#2e2317,#231a10);
+    border:1px solid var(--panel-line); border-radius:18px;
+    padding:14px 16px; box-shadow:0 18px 44px -14px rgba(0,0,0,.75);
+    opacity:0; pointer-events:none; transition:.25s; z-index:26; text-align:center;
+  }
+  .result-bar.show{opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0);}
+  .result-bar .rline{font-size:22px; font-weight:800; letter-spacing:.02em; color:var(--gold);}
+  .result-bar .rdetail{font-size:12px; color:var(--ink-dim); margin-top:5px; line-height:1.6;}
+  .result-bar .rbtns{display:flex; gap:8px; margin-top:12px;}
+  .result-bar .rbtns button{flex:1; padding:11px 4px; border-radius:12px; border:1px solid var(--panel-line);
+    background:var(--panel); color:var(--ink); font-weight:700; font-size:13px; cursor:pointer; font-family:inherit;}
+  .result-bar .rbtns button.primary{background:linear-gradient(180deg,#c9a24e,#a9822f); color:#241a10; border:0;}
+  .result-bar .rbtns button:active{transform:scale(.97);}
+  /* 죽은 돌 표시(× 마크) */
+  .dead-mark{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:44%; height:44%; pointer-events:none; opacity:.9;
+    background:
+      linear-gradient(45deg, transparent 43%, #d0463a 43%, #d0463a 57%, transparent 57%),
+      linear-gradient(-45deg, transparent 43%, #d0463a 43%, #d0463a 57%, transparent 57%);
+  }
 
   .thinking{
     position:absolute; left:50%; top:8px; transform:translateX(-50%);
@@ -334,12 +359,13 @@
   </div>
 </div>
 
-<!-- 결과 -->
-<div class="scrim" id="resultScrim">
-  <div class="sheet">
-    <div class="result-line" id="resultLine">—</div>
-    <div class="result-detail" id="resultDetail"></div>
-    <button class="start-btn" id="resultNew">새 대국</button>
+<!-- 결과 (반상을 가리지 않는 하단 바) -->
+<div class="result-bar" id="resultBar">
+  <div class="rline" id="resultLine">—</div>
+  <div class="rdetail" id="resultDetail"></div>
+  <div class="rbtns">
+    <button id="resultClose">닫고 확인</button>
+    <button class="primary" id="resultNew">새 대국</button>
   </div>
 </div>
 
@@ -1067,9 +1093,11 @@ function findDeadStones(b){
 
 function score(){
   const b=board.slice();
-  for(const k of findDeadStones(b)) b[k]=EMPTY;   // 죽은 돌 제거 → 상대 집으로 산정
+  const dead=findDeadStones(b);
+  for(const k of dead) b[k]=EMPTY;                // 죽은 돌 제거 → 상대 집으로 산정
   let bs=0,ws=0,bt=0,wt=0;
   const seen=new Array(N*N).fill(false);
+  const owner=new Int8Array(N*N);                 // 0 미정, 1 흑집, 2 백집 (죽은돌 자리 포함)
   for(let i=0;i<N*N;i++){ if(b[i]===BLACK)bs++; else if(b[i]===WHITE)ws++; }
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
     const k=idx(x,y); if(b[k]!==EMPTY||seen[k])continue;
@@ -1083,10 +1111,14 @@ function score(){
         else borders.add(b[nk]);
       }
     }
-    if(borders.size===1){ if(borders.has(BLACK))bt+=region.length; else wt+=region.length; }
+    if(borders.size===1){
+      const col=borders.has(BLACK)?1:2;
+      for(const rk of region) owner[rk]=col;
+      if(col===1)bt+=region.length; else wt+=region.length;
+    }
   }
   const black=bs+bt, white=ws+wt+KOMI;
-  return {black,white,bs,ws,bt,wt};
+  return {black,white,bs,ws,bt,wt,owner,dead};
 }
 
 /* ---------- 형세 판단 (중간 예상 집수) ----------
@@ -1153,8 +1185,24 @@ function showEstimate(){
 }
 
 /* ---------- 종료 ---------- */
+function clearTerritory(){ pointsEl.querySelectorAll('.terr,.dead-mark').forEach(e=>e.remove()); }
+function showTerritory(s){
+  clearTerritory();
+  for(let k=0;k<N*N;k++){
+    if(s.owner[k]){
+      const dot=document.createElement('div');
+      dot.className='terr '+(s.owner[k]===1?'b':'w');
+      pointsEl.children[k].appendChild(dot);
+    }
+  }
+  if(s.dead) for(const k of s.dead){
+    const m=document.createElement('div'); m.className='dead-mark';
+    pointsEl.children[k].appendChild(m);
+  }
+}
 function endGame(reason, loser){
   gameOver=true; busy=false; $('thinking').classList.remove('show');
+  clearHint(); clearEstimate();
   let line, detail;
   if(reason==='resign'){
     const winner=3-loser;
@@ -1164,12 +1212,14 @@ function endGame(reason, loser){
     const s=score();
     const diff=Math.abs(s.black-s.white);
     if(s.black>s.white){ line='흑 '+diff.toFixed(1)+'집 승'; }
-    else { line='백 '+diff.toFixed(1)+'집 승'; }
-    detail=`흑 ${s.black.toFixed(1)}집 (돌 ${s.bs} · 집 ${s.bt})<br>백 ${s.white.toFixed(1)}집 (돌 ${s.ws} · 집 ${s.wt} · 덤 ${KOMI})`;
+    else if(s.white>s.black){ line='백 '+diff.toFixed(1)+'집 승'; }
+    else { line='무승부'; }
+    detail=`흑 ${s.black.toFixed(1)}집 (돌 ${s.bs} · 집 ${s.bt}) · 백 ${s.white.toFixed(1)}집 (돌 ${s.ws} · 집 ${s.wt} · 덤 ${KOMI})<br><span style="color:var(--ink-faint)">반상 위 점=집, ✕=죽은 돌(상대 집)</span>`;
+    showTerritory(s);                       // 반상에 집·죽은 돌 표시(가리지 않음)
   }
   $('resultLine').textContent=line;
   $('resultDetail').innerHTML=detail;
-  $('resultScrim').classList.add('show');
+  $('resultBar').classList.add('show');
 }
 
 /* ---------- 렌더 ---------- */
@@ -1287,7 +1337,7 @@ function newGame(){
   N=boardSize; setupBoard();                 // 선택한 크기로 격자·교차점 재생성
   board=new Array(N*N).fill(EMPTY);
   turn=BLACK; caps={[BLACK]:0,[WHITE]:0}; koPoint=null; lastMove=null;
-  history=[]; passes=0; gameOver=false; busy=false; clearHint(); clearEstimate();
+  history=[]; passes=0; gameOver=false; busy=false; clearHint(); clearEstimate(); clearTerritory(); $('resultBar').classList.remove('show');
   $('blackLabel').textContent = mode==='pvp'?'플레이어 1':(myColor===BLACK?'플레이어':'컴퓨터');
   $('whiteLabel').textContent = mode==='pvp'?'플레이어 2':(myColor===WHITE?'플레이어':'컴퓨터');
   render([]); updateStatus();
@@ -1334,7 +1384,8 @@ function hint(){
 }
 
 $('startBtn').addEventListener('click',()=>{ ensureAudio(); $('setupScrim').classList.remove('show'); newGame(); });
-$('resultNew').addEventListener('click',()=>{ $('resultScrim').classList.remove('show'); $('setupScrim').classList.add('show'); });
+$('resultNew').addEventListener('click',()=>{ $('resultBar').classList.remove('show'); clearTerritory(); $('setupScrim').classList.add('show'); });
+$('resultClose').addEventListener('click',()=>{ $('resultBar').classList.remove('show'); });   // 바만 닫고 반상 표시는 유지(확인용)
 $('menuBtn').addEventListener('click',()=>{ $('setupScrim').classList.add('show'); });
 $('newBtn').addEventListener('click',()=>{ $('setupScrim').classList.add('show'); });
 $('hintBtn').addEventListener('click',hint);
