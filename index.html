@@ -557,7 +557,8 @@ function scheduleAI(){
   busy=true;
   $('thinkingText').textContent=(turn===BLACK?'흑':'백')+' 생각 중…';
   $('thinking').classList.add('show');
-  const delay = 320 + Math.random()*380;
+  // 고급은 계산 자체가 오래 걸리므로 인위적 대기는 짧게, 하위 레벨은 자연스럽게
+  const delay = (level===3) ? (90 + Math.random()*140) : (320 + Math.random()*380);
   setTimeout(()=>{
     const mv=chooseAI(board,turn,koPoint,level);
     $('thinking').classList.remove('show');
@@ -667,6 +668,72 @@ function negamax(b,color,ko,depth,alpha,beta,M,K){
   return best;
 }
 
+// ── 몬테카를로: 끝까지 무작위로 둬보고 '실제 집'으로 이기는 수를 고른다 (사활 감각 확보) ──
+// 집 계산(Tromp-Taylor 근사): 돌 + 한 색으로만 둘러싸인 빈 영역 + 백 덤. 흑-백 차 반환.
+function areaMargin(b){
+  let bs=0,ws=0;
+  for(let i=0;i<N*N;i++){ if(b[i]===BLACK)bs++; else if(b[i]===WHITE)ws++; }
+  const seen=new Uint8Array(N*N); let bt=0,wt=0;
+  for(let k=0;k<N*N;k++){
+    if(b[k]!==EMPTY||seen[k])continue;
+    const stack=[k]; seen[k]=1; let sz=0,tb=false,tw=false;
+    while(stack.length){
+      const c=stack.pop(); sz++;
+      const cx=c%N, cy=(c-cx)/N;
+      if(cx>0){const n=c-1; if(b[n]===EMPTY){if(!seen[n]){seen[n]=1;stack.push(n);}}else if(b[n]===BLACK)tb=true;else tw=true;}
+      if(cx<N-1){const n=c+1; if(b[n]===EMPTY){if(!seen[n]){seen[n]=1;stack.push(n);}}else if(b[n]===BLACK)tb=true;else tw=true;}
+      if(cy>0){const n=c-N; if(b[n]===EMPTY){if(!seen[n]){seen[n]=1;stack.push(n);}}else if(b[n]===BLACK)tb=true;else tw=true;}
+      if(cy<N-1){const n=c+N; if(b[n]===EMPTY){if(!seen[n]){seen[n]=1;stack.push(n);}}else if(b[n]===BLACK)tb=true;else tw=true;}
+    }
+    if(tb&&!tw)bt+=sz; else if(tw&&!tb)wt+=sz;
+  }
+  return (bs+bt)-(ws+wt+KOMI);
+}
+// 한 판 무작위 대국(자기 눈은 안 메움 → 그룹이 눈을 지켜 산 채로 종국). 흑-백 집 차 반환.
+function playout(b0,color0,ko0){
+  let b=b0.slice(), color=color0, ko=ko0, passes=0, steps=0;
+  const maxSteps=N*N*2+10;
+  while(passes<2 && steps<maxSteps){
+    let played=false;
+    for(let t=0;t<8;t++){
+      const p=(Math.random()*(N*N))|0;
+      if(b[p]!==EMPTY) continue;
+      const x=p%N, y=(p-x)/N;
+      if(isEyeLike(b,x,y,color)) continue;                          // 자기 눈 보호
+      const r=simulate(b,x,y,color,ko);
+      if(!r.legal) continue;
+      if(r.captured.length===0 && group(r.b,x,y).libs===1) continue; // 자충 회피
+      b=r.b; ko=r.ko; played=true; break;
+    }
+    if(played) passes=0; else { passes++; ko=null; }
+    color=3-color; steps++;
+  }
+  return areaMargin(b);
+}
+// 후보마다 sims회 플레이아웃 → 승률 최고 수 선택
+function montecarloMove(b,color,ko,sims,M){
+  const legal=legalMoves(b,color,ko);
+  if(legal.length===0) return null;
+  let scored=legal.filter(m=>!isEyeLike(b,m[0],m[1],color))
+                  .map(m=>({m,s:evalMove(b,m[0],m[1],color,ko)}))
+                  .sort((a,b)=>b.s-a.s);
+  if(scored.length===0) scored=legal.map(m=>({m,s:0}));
+  const cand=scored.slice(0,Math.min(M,scored.length)).map(o=>o.m);
+  let best=cand[0], bestWR=-1;
+  for(const m of cand){
+    const r=simulate(b,m[0],m[1],color,ko);
+    let win=0;
+    for(let s=0;s<sims;s++){
+      const margin=playout(r.b,3-color,r.ko);
+      const my = (color===BLACK)? margin : -margin;
+      win += my>0 ? 1 : (my===0 ? 0.5 : 0);
+    }
+    const wr=win/sims;
+    if(wr>bestWR){ bestWR=wr; best=m; }
+  }
+  return best;
+}
+
 function chooseAI(b,color,ko,lv){
   const moves=legalMoves(b,color,ko);
   if(moves.length===0) return null;
@@ -697,7 +764,14 @@ function chooseAI(b,color,ko,lv){
     return best;
   }
 
-  // ── 고급: 3수 미니맥스 (내 수 → 상대 응수 → 내 응수) + 세력기준 후보 + 알파-베타 ──
+  // ── 고급 ──
+  // 9·13줄: 몬테카를로 플레이아웃(실제 집으로 승부 → 사활·대마 감각). 19줄: 3수 미니맥스.
+  if(N<=13){
+    const sims = (N<=9)? 110 : 65;
+    const M    = (N<=9)? 16 : 12;
+    const mv = montecarloMove(b,color,ko,sims,M);
+    if(mv) return mv;
+  }
   const depth=3;
   const M = (N<=9)?12 : (N<=13)?10 : 8;   // 1차(지역) 후보 폭
   const K = (N<=9)?5  : (N<=13)?4  : 3;   // 2차(세력) 탐색 폭
