@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#3a2a1a">
+<title>9×9 바둑</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="바둑">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
+<style>
+  :root{
+    --bg1:#241a11; --bg2:#15100a;
+    --wood-a:#e6ba7c; --wood-b:#d19a52; --wood-c:#c78a41;
+    --line:#43301a; --line-soft:#5a4326;
+    --ink:#efe7d8; --ink-dim:#b6a88f; --ink-faint:#8a7d67;
+    --lacquer:#b1362d; --lacquer-glow:#d8564a;
+    --panel:#2a2016; --panel-line:#41321f;
+    --gold:#d9b25b;
+    --safe-t:env(safe-area-inset-top);
+    --safe-b:env(safe-area-inset-bottom);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  body{
+    font-family:'Pretendard','Pretendard Variable',-apple-system,BlinkMacSystemFont,'Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif;
+    background:
+      radial-gradient(120% 90% at 50% -10%, #3a2a1a 0%, var(--bg1) 42%, var(--bg2) 100%);
+    color:var(--ink);
+    overscroll-behavior:none; touch-action:manipulation;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100dvh;
+    padding:calc(var(--safe-t) + 6px) 12px calc(var(--safe-b) + 10px);
+  }
+  .app{width:100%; max-width:520px; display:flex; flex-direction:column; gap:12px; flex:1;}
+
+  /* ---- Top bar ---- */
+  header{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+  .title{display:flex; align-items:baseline; gap:8px;}
+  .title h1{
+    font-size:20px; font-weight:800; letter-spacing:.14em; margin:0;
+    color:var(--ink);
+  }
+  .title .en{font-size:10px; letter-spacing:.34em; color:var(--ink-faint); text-transform:uppercase;}
+  .icon-btn{
+    width:40px;height:40px;border-radius:12px;border:1px solid var(--panel-line);
+    background:var(--panel); color:var(--ink-dim); font-size:18px;
+    display:flex;align-items:center;justify-content:center; cursor:pointer;
+  }
+  .icon-btn:active{transform:scale(.94);}
+  .icon-btn.on{color:var(--gold); border-color:#6b5220;}
+
+  /* ---- Score strip ---- */
+  .status{
+    display:flex; align-items:stretch; gap:8px;
+  }
+  .cap{
+    flex:1; display:flex; align-items:center; gap:10px;
+    background:var(--panel); border:1px solid var(--panel-line);
+    border-radius:14px; padding:9px 12px; position:relative; overflow:hidden;
+  }
+  .cap.active{border-color:var(--lacquer); box-shadow:0 0 0 1px var(--lacquer) inset, 0 0 18px -6px var(--lacquer-glow);}
+  .cap .dot{width:22px;height:22px;border-radius:50%;flex:none;}
+  .dot.black{background:radial-gradient(circle at 33% 28%,#6a6f78 0%,#2b2e33 24%,#0c0d10 62%,#000 100%);}
+  .dot.white{background:radial-gradient(circle at 35% 30%,#fff 0%,#f4f1ea 42%,#d8d2c4 82%,#b9b1a0 100%);}
+  .cap .who{font-size:12px;color:var(--ink-dim);line-height:1.2;}
+  .cap .who b{display:block;color:var(--ink);font-size:13px;font-weight:700;}
+  .cap .num{margin-left:auto;font-size:12px;color:var(--ink-faint);}
+  .cap .num b{color:var(--ink);font-size:15px;}
+  .turn-pill{
+    position:absolute; right:8px; top:-1px; font-size:9px; letter-spacing:.12em;
+    color:var(--lacquer-glow); opacity:0; transition:opacity .2s;
+  }
+  .cap.active .turn-pill{opacity:1;}
+
+  /* ---- Board ---- */
+  .board-wrap{
+    position:relative; width:100%; aspect-ratio:1/1; align-self:center;
+    max-width:min(92vw, 60dvh); margin:2px auto;
+    border-radius:10px;
+    padding:9px;
+    background:
+      linear-gradient(160deg,#7a5326,#5c3c19 60%,#4a2f13);
+    box-shadow:
+      0 18px 40px -16px rgba(0,0,0,.7),
+      0 2px 0 #8a6330 inset,
+      0 -2px 6px rgba(0,0,0,.4) inset;
+  }
+  .board{
+    position:relative; width:100%; height:100%; border-radius:4px;
+    background:
+      /* subtle grain */
+      repeating-linear-gradient(92deg, rgba(120,74,26,.10) 0 3px, rgba(150,96,40,0) 3px 9px),
+      repeating-linear-gradient(88deg, rgba(90,54,18,.10) 0 5px, rgba(0,0,0,0) 5px 13px),
+      radial-gradient(130% 100% at 30% 20%, var(--wood-a), var(--wood-b) 55%, var(--wood-c));
+    box-shadow:0 1px 3px rgba(0,0,0,.35) inset;
+    overflow:hidden;
+  }
+  .board svg{position:absolute;inset:0;width:100%;height:100%;}
+  .board svg line{stroke:var(--line);stroke-width:.42;}
+  .board svg .edge{stroke-width:.62;}
+  .board svg circle.star{fill:var(--line);}
+  .grid-layer{position:absolute;inset:0;}
+  .pt{
+    position:absolute; transform:translate(-50%,-50%);
+    display:flex;align-items:center;justify-content:center;
+    cursor:pointer;
+  }
+  .pt .hit{position:absolute; width:100%; height:100%; border-radius:50%;}
+  .stone{
+    position:absolute; border-radius:50%; pointer-events:none;
+    left:50%; top:50%; transform:translate(-50%,-50%);
+  }
+  .stone.black{
+    background:radial-gradient(circle at 32% 27%,#767b84 0%,#33373d 22%,#131519 55%,#000 100%);
+    box-shadow:0 .9px 1.6px rgba(0,0,0,.55), 0 .2px .4px rgba(255,255,255,.15) inset;
+  }
+  .stone.white{
+    background:radial-gradient(circle at 35% 29%,#ffffff 0%,#f6f3ec 38%,#ded7c8 78%,#bcb4a2 100%);
+    box-shadow:0 .9px 1.6px rgba(0,0,0,.4), 0 -.5px 1px rgba(120,110,90,.35) inset, 0 .3px .5px rgba(255,255,255,.7) inset;
+  }
+  .stone.ghost{opacity:.42;}
+  .stone.place{animation:place .16s ease-out;}
+  @keyframes place{from{transform:translate(-50%,-50%) scale(1.18);}to{transform:translate(-50%,-50%) scale(1);}}
+  .stone.captured{animation:cap .22s ease-in forwards;}
+  @keyframes cap{to{transform:translate(-50%,-50%) scale(.2);opacity:0;}}
+  .last-mark{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:26%;height:26%;border-radius:50%;pointer-events:none;
+  }
+  .last-mark.on-black{background:rgba(255,255,255,.85);}
+  .last-mark.on-white{background:rgba(30,30,30,.8);}
+  .hint-ring{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:98%;height:98%;border-radius:50%;pointer-events:none;
+    border:2.5px solid var(--gold);
+    box-shadow:0 0 12px 2px rgba(217,178,91,.65);
+    animation:hintpulse 1s ease-in-out infinite;
+  }
+  @keyframes hintpulse{
+    0%,100%{opacity:.5; transform:translate(-50%,-50%) scale(.86);}
+    50%{opacity:1; transform:translate(-50%,-50%) scale(1.02);}
+  }
+  /* 형세 판단 영역 표시 */
+  .terr{
+    position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:30%;height:30%;border-radius:50%;pointer-events:none;
+  }
+  .terr.b{background:rgba(14,16,19,.5);}
+  .terr.w{background:rgba(255,255,255,.72);box-shadow:0 0 0 1px rgba(120,110,90,.22);}
+  .estimate{
+    position:fixed; left:50%; bottom:calc(104px + var(--safe-b));
+    transform:translateX(-50%) translateY(10px);
+    background:linear-gradient(180deg,#2e2317,#231a10);
+    border:1px solid var(--panel-line); border-radius:16px;
+    padding:13px 30px 12px; min-width:236px; max-width:92vw;
+    box-shadow:0 18px 44px -14px rgba(0,0,0,.7);
+    opacity:0; pointer-events:none; transition:.22s; z-index:25; text-align:center;
+  }
+  .estimate.show{opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0);}
+  .estimate .verdict{font-size:17px;font-weight:800;letter-spacing:.02em;color:var(--ink);}
+  .estimate .verdict.b::before{content:'●';color:#111;margin-right:6px;
+    text-shadow:0 0 0 #111; -webkit-text-stroke:1px #888; font-size:13px;}
+  .estimate .verdict.w::before{content:'●';color:#f4f1ea;margin-right:6px;font-size:13px;}
+  .estimate .nums{font-size:11.5px;color:var(--ink-dim);margin-top:5px;line-height:1.5;}
+  .estimate .tag{font-size:10px;color:var(--ink-faint);margin-top:6px;letter-spacing:.03em;}
+  .estimate .x{position:absolute;top:7px;right:12px;color:var(--ink-faint);font-size:14px;cursor:pointer;line-height:1;}
+
+  .thinking{
+    position:absolute; left:50%; top:8px; transform:translateX(-50%);
+    background:rgba(20,14,8,.72); color:var(--ink); font-size:11px;
+    padding:5px 12px; border-radius:20px; letter-spacing:.04em;
+    display:none; align-items:center; gap:7px; backdrop-filter:blur(3px);
+  }
+  .thinking.show{display:flex;}
+  .thinking i{width:6px;height:6px;border-radius:50%;background:var(--lacquer-glow);animation:blink .8s infinite;}
+  @keyframes blink{0%,100%{opacity:.3;}50%{opacity:1;}}
+
+  /* ---- Controls ---- */
+  .controls{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;}
+  .ctrl{
+    padding:11px 2px;border-radius:13px;border:1px solid var(--panel-line);
+    background:var(--panel); color:var(--ink); font-size:13px; font-weight:600;
+    cursor:pointer; display:flex;flex-direction:column;align-items:center;gap:2px;
+  }
+  .ctrl small{font-size:9px;color:var(--ink-faint);font-weight:500;letter-spacing:.02em;}
+  .ctrl:active{transform:scale(.96);}
+  .ctrl.primary{background:linear-gradient(180deg,#c04236,#9c2c22);border-color:#7c231b;color:#fff;}
+  .ctrl.hint{background:linear-gradient(180deg,#3a2f16,#2c2410);border-color:#6b5220;color:var(--gold);}
+  .ctrl.hint small{color:#a98b45;}
+  .ctrl.est{background:linear-gradient(180deg,#26302a,#1d2620);border-color:#42564a;color:#a9c9b3;}
+  .ctrl.est small{color:#7d977f;}
+  .ctrl:disabled{opacity:.4;}
+
+  /* ---- Modal / Settings ---- */
+  .scrim{
+    position:fixed;inset:0;background:rgba(10,7,4,.62);backdrop-filter:blur(4px);
+    display:none;align-items:center;justify-content:center;padding:20px;z-index:20;
+  }
+  .scrim.show{display:flex;}
+  .sheet{
+    width:100%;max-width:420px;background:linear-gradient(180deg,#2e2317,#241a10);
+    border:1px solid var(--panel-line);border-radius:22px;padding:22px 20px calc(20px + var(--safe-b));
+    box-shadow:0 30px 60px -20px rgba(0,0,0,.8);
+  }
+  .sheet h2{margin:0 0 4px;font-size:18px;letter-spacing:.06em;}
+  .sheet p.sub{margin:0 0 18px;font-size:12px;color:var(--ink-faint);}
+  .field{margin-bottom:16px;}
+  .field > label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:7px;letter-spacing:.03em;}
+  .seg{display:flex;gap:6px;background:#1c140c;border:1px solid var(--panel-line);border-radius:13px;padding:4px;}
+  .seg button{
+    flex:1;padding:10px 4px;border:0;border-radius:9px;background:transparent;
+    color:var(--ink-dim);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;
+    display:flex;flex-direction:column;gap:2px;align-items:center;
+  }
+  .seg button small{font-size:10px;font-weight:500;opacity:.8;}
+  .seg button.sel{background:linear-gradient(180deg,#4a3720,#3a2b18);color:var(--ink);box-shadow:0 1px 0 #5f471f inset;}
+  .seg button.sel.red{background:linear-gradient(180deg,#b1362d,#8f271f);color:#fff;}
+  .start-btn{
+    width:100%;margin-top:6px;padding:15px;border:0;border-radius:14px;
+    background:linear-gradient(180deg,#c9a24e,#a9822f);color:#241a10;
+    font-size:15px;font-weight:800;letter-spacing:.05em;cursor:pointer;font-family:inherit;
+  }
+  .start-btn:active{transform:scale(.98);}
+  .result-line{font-size:26px;font-weight:800;text-align:center;margin:6px 0 2px;}
+  .result-detail{text-align:center;font-size:13px;color:var(--ink-dim);margin-bottom:18px;line-height:1.7;}
+  .hidden{display:none !important;}
+  .install-hint{
+    font-size:11px;color:var(--ink-faint);text-align:center;line-height:1.6;
+    padding:0 4px;
+  }
+  .toast{
+    position:fixed;left:50%;bottom:calc(18px + var(--safe-b));transform:translateX(-50%) translateY(20px);
+    background:#1c140c;border:1px solid var(--panel-line);color:var(--ink);
+    padding:11px 18px;border-radius:24px;font-size:13px;opacity:0;transition:.25s;z-index:30;pointer-events:none;
+    box-shadow:0 10px 30px -10px rgba(0,0,0,.6);
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="title">
+      <h1>바둑</h1><span class="en" id="sizeLabel">9 × 9</span>
+    </div>
+    <div style="display:flex;gap:8px;">
+      <button class="icon-btn on" id="soundBtn" title="소리">🔊</button>
+      <button class="icon-btn" id="menuBtn" title="새 대국">☰</button>
+    </div>
+  </header>
+
+  <div class="status">
+    <div class="cap" id="capBlack">
+      <span class="dot black"></span>
+      <div class="who"><b>흑</b><span id="blackLabel">플레이어</span></div>
+      <div class="num">잡은 돌 <b id="blackCaps">0</b></div>
+      <span class="turn-pill">차례</span>
+    </div>
+    <div class="cap" id="capWhite">
+      <span class="dot white"></span>
+      <div class="who"><b>백</b><span id="whiteLabel">컴퓨터</span></div>
+      <div class="num">잡은 돌 <b id="whiteCaps">0</b></div>
+      <span class="turn-pill">차례</span>
+    </div>
+  </div>
+
+  <div class="board-wrap">
+    <div class="board" id="board">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" id="grid"></svg>
+      <div class="grid-layer" id="points"></div>
+      <div class="thinking" id="thinking"><i></i><span id="thinkingText">백 생각 중…</span></div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button class="ctrl est" id="estBtn">형세<small>판세</small></button>
+    <button class="ctrl hint" id="hintBtn">힌트<small>Hint</small></button>
+    <button class="ctrl" id="undoBtn">무르기<small>Undo</small></button>
+    <button class="ctrl" id="passBtn">한 수 쉼<small>Pass</small></button>
+    <button class="ctrl" id="resignBtn">기권<small>Resign</small></button>
+    <button class="ctrl primary" id="newBtn">새 대국<small>New</small></button>
+  </div>
+</div>
+
+<!-- 시작 설정 -->
+<div class="scrim show" id="setupScrim">
+  <div class="sheet">
+    <h2>새 대국 설정</h2>
+    <p class="sub">덤 6.5집 · 흑 선착</p>
+
+    <div class="field">
+      <label>바둑판 크기</label>
+      <div class="seg" id="sizeSeg">
+        <button data-size="9" class="sel">9×9<small>입문</small></button>
+        <button data-size="13">13×13<small>실전</small></button>
+        <button data-size="19">19×19<small>정식</small></button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>대국 상대</label>
+      <div class="seg" id="modeSeg">
+        <button data-mode="ai" class="sel red">컴퓨터<small>혼자 두기</small></button>
+        <button data-mode="pvp">2인 대국<small>같이 두기</small></button>
+      </div>
+    </div>
+
+    <div class="field" id="levelField">
+      <label>난이도</label>
+      <div class="seg" id="levelSeg">
+        <button data-level="1" class="sel">초급<small>입문</small></button>
+        <button data-level="2">중급<small>실전</small></button>
+        <button data-level="3">고급<small>강수</small></button>
+      </div>
+    </div>
+
+    <div class="field" id="colorField">
+      <label>내 돌 색</label>
+      <div class="seg" id="colorSeg">
+        <button data-color="1" class="sel">흑<small>선착</small></button>
+        <button data-color="2">백<small>덤 6.5</small></button>
+      </div>
+    </div>
+
+    <button class="start-btn" id="startBtn">대국 시작</button>
+    <p class="install-hint" id="installHint" style="margin-top:16px;"></p>
+  </div>
+</div>
+
+<!-- 결과 -->
+<div class="scrim" id="resultScrim">
+  <div class="sheet">
+    <div class="result-line" id="resultLine">—</div>
+    <div class="result-detail" id="resultDetail"></div>
+    <button class="start-btn" id="resultNew">새 대국</button>
+  </div>
+</div>
+
+<div class="estimate" id="estimate">
+  <span class="x" id="estClose">✕</span>
+  <div class="verdict" id="estVerdict">—</div>
+  <div class="nums" id="estNums"></div>
+  <div class="tag">중간 형세 · 예상 집수(세력 기준, 근사치)</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   9×9 바둑 엔진 + UI
+   ============================================================ */
+const EMPTY=0, BLACK=1, WHITE=2;
+const KOMI = 6.5;
+let N = 9;                            // 바둑판 줄 수 (9 또는 13)
+
+let board, turn, caps, koPoint, lastMove, history, passes, gameOver;
+let mode='ai', level=1, myColor=BLACK, boardSize=9;
+let soundOn=true, busy=false;
+
+const $=id=>document.getElementById(id);
+const pointsEl=$('points');
+
+/* ---------- 좌표 매핑 ---------- */
+const MARGIN=6;                       // % 여백 (테두리 줄여 반상 확대)
+let CELL=(100-2*MARGIN)/(N-1);        // 교차점 간격(%) — N에 따라 갱신
+const pct=i=>MARGIN+i*CELL;           // 인덱스→%
+// 돌은 한 칸 크기의 부모(.pt) 안에 들어가므로, 지름은 '칸 대비 %'로 지정한다.
+const STONE=98;                       // 돌 지름 = 칸의 98% (실제 바둑처럼 칸을 꽉 채움)
+
+// 화점(星) — 판 크기별
+function starPoints(n){
+  if(n===9)  return [[2,2],[2,6],[6,2],[6,6],[4,4]];
+  if(n===13) return [[3,3],[3,9],[9,3],[9,9],[6,6]];
+  if(n===19) return [[3,3],[3,9],[3,15],[9,3],[9,9],[9,15],[15,3],[15,9],[15,15]];
+  return [];
+}
+let HOSHI = starPoints(N);
+
+// N이 바뀌면 격자 형상 재계산 후 격자·교차점을 다시 그린다
+function setupBoard(){
+  CELL = (100-2*MARGIN)/(N-1);
+  HOSHI = starPoints(N);
+  drawGrid(); buildPoints();
+  $('sizeLabel').textContent = N+' × '+N;
+}
+
+/* ---------- 격자 그리기 ---------- */
+function drawGrid(){
+  const svg=$('grid'); let s='';
+  for(let i=0;i<N;i++){
+    const p=pct(i);
+    const edge=(i===0||i===N-1)?' class="edge"':'';
+    s+=`<line${edge} x1="${pct(0)}" y1="${p}" x2="${pct(N-1)}" y2="${p}"/>`;
+    s+=`<line${edge} x1="${p}" y1="${pct(0)}" x2="${p}" y2="${pct(N-1)}"/>`;
+  }
+  const hr = N<=9 ? 0.9 : (N<=13 ? 0.7 : 0.55);
+  for(const [x,y] of HOSHI) s+=`<circle class="star" cx="${pct(x)}" cy="${pct(y)}" r="${hr}"/>`;
+  svg.innerHTML=s;
+}
+
+/* ---------- 교차점(터치 타깃) ---------- */
+function buildPoints(){
+  pointsEl.innerHTML='';
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const d=document.createElement('div');
+    d.className='pt';
+    d.style.left=pct(x)+'%'; d.style.top=pct(y)+'%';
+    d.style.width=CELL+'%'; d.style.height=CELL+'%';
+    d.dataset.x=x; d.dataset.y=y;
+    const hit=document.createElement('div'); hit.className='hit'; d.appendChild(hit);
+    d.addEventListener('click',()=>onTap(x,y));
+    // 데스크톱 미리보기
+    d.addEventListener('mouseenter',()=>preview(x,y,d));
+    d.addEventListener('mouseleave',()=>{const g=d.querySelector('.ghost');if(g)g.remove();});
+    pointsEl.appendChild(d);
+  }
+}
+
+/* ---------- 바둑 규칙 ---------- */
+const idx=(x,y)=>y*N+x;
+const inB=(x,y)=>x>=0&&x<N&&y>=0&&y<N;
+function neighbors(x,y){const r=[];if(x>0)r.push([x-1,y]);if(x<N-1)r.push([x+1,y]);if(y>0)r.push([x,y-1]);if(y<N-1)r.push([x,y+1]);return r;}
+
+function group(b,x,y){
+  const c=b[idx(x,y)]; const st=[]; const seen=new Set(); const stack=[[x,y]]; let libs=new Set();
+  while(stack.length){
+    const [cx,cy]=stack.pop(); const k=idx(cx,cy);
+    if(seen.has(k))continue; seen.add(k);
+    if(b[k]===c){st.push([cx,cy]); for(const [nx,ny] of neighbors(cx,cy)){if(b[idx(nx,ny)]===EMPTY)libs.add(idx(nx,ny));else if(b[idx(nx,ny)]===c&&!seen.has(idx(nx,ny)))stack.push([nx,ny]);}}
+  }
+  return {stones:st, libs:libs.size, libSet:libs};
+}
+
+// 착수 시뮬레이션 → {legal,b,captured,ko}
+function simulate(b0,x,y,color,ko){
+  if(b0[idx(x,y)]!==EMPTY) return {legal:false};
+  if(ko!==null && idx(x,y)===ko) return {legal:false};
+  const b=b0.slice(); b[idx(x,y)]=color; const opp=3-color;
+  let captured=[];
+  for(const [nx,ny] of neighbors(x,y)){
+    if(b[idx(nx,ny)]===opp){
+      const g=group(b,nx,ny);
+      if(g.libs===0){for(const [sx,sy] of g.stones){b[idx(sx,sy)]=EMPTY; captured.push([sx,sy]);}}
+    }
+  }
+  if(captured.length===0){
+    const g=group(b,x,y);
+    if(g.libs===0) return {legal:false}; // 자살수
+  }
+  // 패(ko) 지점 계산: 정확히 1개 잡고, 착수한 돌이 단수(자유도1, 크기1)
+  let newKo=null;
+  if(captured.length===1){
+    const g=group(b,x,y);
+    if(g.stones.length===1 && g.libs===1) newKo=idx(captured[0][0],captured[0][1]);
+  }
+  return {legal:true, b, captured, ko:newKo};
+}
+
+function legalMoves(b,color,ko){
+  const m=[];
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(b[idx(x,y)]!==EMPTY)continue;
+    const r=simulate(b,x,y,color,ko);
+    if(r.legal)m.push([x,y]);
+  }
+  return m;
+}
+
+/* ---------- 착수 ---------- */
+function onTap(x,y){
+  if(busy||gameOver)return;
+  if(mode==='ai' && turn!==myColor)return;
+  clearHint();
+  const r=simulate(board,x,y,turn,koPoint);
+  if(!r.legal){ toast('둘 수 없는 자리입니다'); return; }
+  applyMove(r,x,y);
+  if(mode==='ai' && !gameOver && turn!==myColor){ scheduleAI(); }
+}
+
+function applyMove(r,x,y){
+  pushHistory();
+  clearEstimate();
+  const mover=turn;
+  board=r.b; koPoint=r.ko;
+  caps[mover]+=r.captured.length;
+  lastMove=[x,y];
+  passes=0;
+  turn=3-turn;
+  render(r.captured);
+  // 소리: 따냄 > 단수 경고 > 일반 착수
+  if(r.captured.length){ playCapture(r.captured.length); }
+  else {
+    playStone();
+    if(isAtariAfter(board,x,y,mover)){ playAtari(); toast('단수!'); }
+  }
+  updateStatus();
+}
+
+// 이 수로 인해 (상대 또는 자신의) 어떤 돌이 단수(자유도 1)가 되었는가.
+// 돌을 놓으면 그 자리에 인접한 그룹들과 방금 둔 돌의 그룹만 자유도가 변하므로 그 범위만 검사한다.
+function isAtariAfter(b,x,y,mover){
+  const opp=3-mover;
+  for(const [nx,ny] of neighbors(x,y)){
+    if(b[idx(nx,ny)]===opp && group(b,nx,ny).libs===1) return true;   // 상대 단수(공격)
+  }
+  if(group(b,x,y).libs===1) return true;                              // 자충(자기 단수)
+  return false;
+}
+
+function pushHistory(){
+  history.push({board:board.slice(),turn,caps:{...caps},koPoint,lastMove:lastMove?lastMove.slice():null,passes});
+  if(history.length>400)history.shift();
+}
+
+function doPass(){
+  if(busy||gameOver)return;
+  if(mode==='ai'&&turn!==myColor)return;
+  clearHint(); clearEstimate();
+  pushHistory();
+  passes++; koPoint=null; lastMove=null;
+  const passer=turn; turn=3-turn;
+  updateStatus(); render([]);
+  toast((passer===BLACK?'흑':'백')+' 한 수 쉼');
+  if(passes>=2){ endGame('pass'); return; }
+  if(mode==='ai'&&turn!==myColor) scheduleAI();
+}
+
+function undo(){
+  if(busy||gameOver||history.length===0)return;
+  // vs 컴퓨터: 내 차례로 돌아올 때까지 되돌림
+  let steps=1;
+  if(mode==='ai'){ steps = (turn===myColor)?2:1; }
+  steps=Math.min(steps,history.length);
+  let snap;
+  for(let i=0;i<steps;i++) snap=history.pop();
+  board=snap.board; turn=snap.turn; caps=snap.caps; koPoint=snap.koPoint; lastMove=snap.lastMove; passes=snap.passes;
+  gameOver=false; clearHint(); clearEstimate();
+  render([]); updateStatus();
+  if(mode==='ai' && turn!==myColor) scheduleAI();
+}
+
+function resign(){
+  if(gameOver)return;
+  const loser = (mode==='ai')? myColor : turn;
+  endGame('resign', loser);
+}
+
+/* ---------- AI ---------- */
+function scheduleAI(){
+  busy=true;
+  $('thinkingText').textContent=(turn===BLACK?'흑':'백')+' 생각 중…';
+  $('thinking').classList.add('show');
+  const delay = 320 + Math.random()*380;
+  setTimeout(()=>{
+    const mv=chooseAI(board,turn,koPoint,level);
+    $('thinking').classList.remove('show');
+    busy=false;
+    if(mv===null){ // 둘 곳 없음 → 패스
+      pushHistory(); passes++; const p=turn; turn=3-turn; updateStatus(); render([]);
+      toast((p===BLACK?'흑':'백')+' 한 수 쉼');
+      if(passes>=2) endGame('pass');
+      return;
+    }
+    const r=simulate(board,mv[0],mv[1],turn,koPoint);
+    applyMove(r,mv[0],mv[1]);
+    if(mode==='ai'&&!gameOver&&turn!==myColor) scheduleAI();
+  }, delay);
+}
+
+// 후보수 평가
+function evalMove(b,x,y,color,ko){
+  const r=simulate(b,x,y,color,ko);
+  if(!r.legal)return -1e9;
+  const opp=3-color;
+  let sc=0;
+  sc += r.captured.length*14;                    // 돌 따내기
+  const g=group(r.b,x,y);
+  if(g.libs===1 && r.captured.length===0) sc-=22; // 자충(스스로 단수)
+  else sc += Math.min(g.libs,4)*1.4;
+  // 상대 단수/공격
+  for(const [nx,ny] of neighbors(x,y)){
+    if(b[idx(nx,ny)]===opp){
+      const og=group(b,nx,ny);
+      if(og.libs===2) sc+=3.5;                   // 조임
+      if(og.libs===1) sc+=8;                     // 단수(잡을 기회)
+    }
+  }
+  // 내 약한 돌 살리기
+  for(const [nx,ny] of neighbors(x,y)){
+    if(b[idx(nx,ny)]===color){
+      const mg=group(b,nx,ny);
+      if(mg.libs===1) sc+=9;                      // 단수 탈출
+      else if(mg.libs===2) sc+=2;
+      else sc+=0.6;                               // 연결
+    }
+  }
+  // 자기 집(눈) 메우기 금지
+  if(isEyeLike(b,x,y,color)) sc-=30;
+  // 위치 가치: 3선 선호, 가장자리 회피, 중앙 약간
+  const edge=Math.min(x,y,N-1-x,N-1-y);
+  if(edge===0)sc-=3; else if(edge===1)sc-=0.4; else if(edge===2)sc+=1.6; else sc+=0.9;
+  return sc;
+}
+
+// 눈처럼 보이는 자리(사방+주요 대각이 아군)
+function isEyeLike(b,x,y,color){
+  for(const [nx,ny] of neighbors(x,y)) if(b[idx(nx,ny)]!==color) return false;
+  let own=0,tot=0;
+  for(const [dx,dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    const nx=x+dx,ny=y+dy; if(!inB(nx,ny))continue; tot++;
+    if(b[idx(nx,ny)]===color)own++;
+  }
+  return tot===0 || own>=tot-1;
+}
+
+// ── 국면 평가: 세력(영향력) 기반 흑 관점 집 우위 (덤 제외) ──
+function areaLead(b){
+  const stones=[]; let bS=0,wS=0;
+  for(let i=0;i<N*N;i++){ const v=b[i]; if(v){ stones.push(i); if(v===BLACK)bS++; else wS++; } }
+  let bT=0,wT=0; const TH=0.16;
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const k=y*N+x; if(b[k])continue;
+    let s=0;
+    for(const si of stones){ const sx=si%N, sy=(si-sx)/N; const dx=sx-x,dy=sy-y; s += (b[si]===BLACK?1:-1)/(1+dx*dx+dy*dy); }
+    if(s>TH)bT++; else if(s<-TH)wT++;
+  }
+  return (bS+bT)-(wS+wT);
+}
+function evalBoard(b,color){ const L=areaLead(b); return color===BLACK? L : -L; }
+
+// 후보 좁히기(지역평가): 빠른 1차 필터/정렬용
+function candidateMoves(b,color,ko,K){
+  const moves=legalMoves(b,color,ko);
+  if(moves.length===0) return moves;
+  const sc=moves.map(m=>({m,s:evalMove(b,m[0],m[1],color,ko)})).sort((a,b)=>b.s-a.s);
+  return (moves.length<=K ? sc : sc.slice(0,K)).map(o=>o.m);
+}
+// 후보 좁히기(세력 기준): 지역평가로 M개 → 착수 후 '집 우위'로 K개.
+// 깊은 탐색이 현실적인(집을 만드는) 수를 읽도록 한다.
+function candidatesByArea(b,color,ko,M,K){
+  const moves=legalMoves(b,color,ko);
+  if(moves.length===0) return moves;
+  let sc=moves.map(m=>({m,s:evalMove(b,m[0],m[1],color,ko)})).sort((a,b)=>b.s-a.s).slice(0,Math.min(M,moves.length));
+  sc=sc.map(o=>{ const r=simulate(b,o.m[0],o.m[1],color,ko); return {m:o.m, v:evalBoard(r.b,color)}; })
+       .sort((a,b)=>b.v-a.v).slice(0,K);
+  return sc.map(o=>o.m);
+}
+// 네가맥스 + 알파-베타. 후보는 세력 기준으로 선별, 잎은 '수 둘 차례' 관점 집 우위로 평가.
+function negamax(b,color,ko,depth,alpha,beta,M,K){
+  const moves=candidatesByArea(b,color,ko,M,K);
+  if(depth===0 || moves.length===0) return evalBoard(b,color);
+  let best=-1e9;
+  for(const m of moves){
+    const r=simulate(b,m[0],m[1],color,ko);
+    const v=-negamax(r.b,3-color,r.ko,depth-1,-beta,-alpha,M,K);
+    if(v>best) best=v;
+    if(best>alpha) alpha=best;
+    if(alpha>=beta) break;      // 가지치기
+  }
+  return best;
+}
+
+function chooseAI(b,color,ko,lv){
+  const moves=legalMoves(b,color,ko);
+  if(moves.length===0) return null;
+
+  // ── 초급: 약하게. 뻔한 따냄만 가끔 챙기고, 자충·자기 눈만 피해 나머지는 무작위 ──
+  if(lv===1){
+    const caps=[], safe=[];
+    for(const m of moves){
+      const r=simulate(b,m[0],m[1],color,ko); if(!r.legal) continue;
+      if(r.captured.length>0) caps.push(m);
+      const selfAtari = r.captured.length===0 && group(r.b,m[0],m[1]).libs===1;
+      if(!isEyeLike(b,m[0],m[1],color) && !selfAtari) safe.push(m);
+    }
+    if(caps.length && Math.random()<0.5) return caps[(Math.random()*caps.length)|0];
+    const pool = safe.length? safe : moves;
+    return pool[(Math.random()*pool.length)|0];
+  }
+
+  // ── 중급: 착수 후 '내 집 우위'를 최대화하는 1수 평가 ──
+  if(lv===2){
+    const cand=candidateMoves(b,color,ko, (N<=13)?10:8);
+    let best=cand[0], bestV=-1e9;
+    for(const m of cand){
+      const r=simulate(b,m[0],m[1],color,ko);
+      const v = evalBoard(r.b,color) + evalMove(b,m[0],m[1],color,ko)*0.06 + Math.random()*0.7;
+      if(v>bestV){ bestV=v; best=m; }
+    }
+    return best;
+  }
+
+  // ── 고급: 3수 미니맥스 (내 수 → 상대 응수 → 내 응수) + 세력기준 후보 + 알파-베타 ──
+  const depth=3;
+  const M = (N<=9)?12 : (N<=13)?10 : 8;   // 1차(지역) 후보 폭
+  const K = (N<=9)?5  : (N<=13)?4  : 3;   // 2차(세력) 탐색 폭
+  const opp=3-color;
+  const root=candidatesByArea(b,color,ko,M,K);
+  const results=[];
+  let bestV=-1e9;
+  for(const m of root){
+    const r=simulate(b,m[0],m[1],color,ko);
+    const v = -negamax(r.b,opp,r.ko,depth-1,-1e9,1e9,M,K);   // 루트는 정확값
+    results.push({m,v});
+    if(v>bestV) bestV=v;
+  }
+  const near=results.filter(o=>o.v>=bestV-0.5);            // 동률 근처는 무작위로 변화
+  return near[(Math.random()*near.length)|0].m;
+}
+
+/* ---------- 집 계산 ---------- */
+function score(){
+  let bs=0,ws=0,bt=0,wt=0;
+  const seen=new Array(N*N).fill(false);
+  for(let i=0;i<N*N;i++){ if(board[i]===BLACK)bs++; else if(board[i]===WHITE)ws++; }
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const k=idx(x,y); if(board[k]!==EMPTY||seen[k])continue;
+    const region=[]; const stack=[[x,y]]; const borders=new Set();
+    while(stack.length){
+      const [cx,cy]=stack.pop(); const ck=idx(cx,cy);
+      if(seen[ck])continue; seen[ck]=true; region.push(ck);
+      for(const [nx,ny] of neighbors(cx,cy)){
+        const nk=idx(nx,ny);
+        if(board[nk]===EMPTY){ if(!seen[nk])stack.push([nx,ny]); }
+        else borders.add(board[nk]);
+      }
+    }
+    if(borders.size===1){ if(borders.has(BLACK))bt+=region.length; else wt+=region.length; }
+  }
+  const black=bs+bt, white=ws+wt+KOMI;
+  return {black,white,bs,ws,bt,wt};
+}
+
+/* ---------- 형세 판단 (중간 예상 집수) ----------
+   빈 점마다 흑/백 돌들의 '세력(영향력)'을 거리로 합산해 소유를 추정한다.
+   영향력 = Σ 부호(색)/(1+거리²).  임계값 미만이면 '미정(중립)'.
+   집계는 중국식 area 방식: 예상집 = 자기 돌 수 + 자기 세력권 + (백은 덤).      */
+function estimateScore(){
+  const owner=new Int8Array(N*N);           // 0 미정, 1 흑, 2 백
+  const stones=[];
+  let bStones=0, wStones=0;
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const v=board[idx(x,y)];
+    if(v!==EMPTY){ stones.push([x,y,v]); if(v===BLACK)bStones++; else wStones++; }
+  }
+  const TH=0.16;                            // 중립 판정 임계
+  let bTerr=0, wTerr=0, neutral=0;
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(board[idx(x,y)]!==EMPTY) continue;
+    let s=0;
+    for(const [sx,sy,v] of stones){
+      const dx=sx-x, dy=sy-y, d2=dx*dx+dy*dy;
+      const w=1/(1+d2);                     // 거리 제곱 감쇠
+      s += (v===BLACK? w : -w);
+    }
+    if(s>TH){ owner[idx(x,y)]=1; bTerr++; }
+    else if(s<-TH){ owner[idx(x,y)]=2; wTerr++; }
+    else neutral++;
+  }
+  const black=bStones+bTerr, white=wStones+wTerr+KOMI;
+  return {black,white,bStones,wStones,bTerr,wTerr,neutral,owner};
+}
+
+let estTimer;
+function clearEstimate(){
+  pointsEl.querySelectorAll('.terr').forEach(e=>e.remove());
+  $('estimate').classList.remove('show');
+}
+function showEstimate(){
+  if(busy){ toast('상대가 두는 중입니다'); return; }
+  clearHint(); clearEstimate();
+  const s=estimateScore();
+  // 반상 세력권 음영
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    if(board[idx(x,y)]!==EMPTY) continue;
+    const o=s.owner[idx(x,y)]; if(!o) continue;
+    const dot=document.createElement('div');
+    dot.className='terr '+(o===1?'b':'w');
+    pointsEl.children[idx(x,y)].appendChild(dot);
+  }
+  // 요약
+  const diff=s.black-s.white;
+  const v=$('estVerdict');
+  if(Math.abs(diff)<0.5){ v.textContent='호각 — 팽팽합니다'; v.className='verdict'; }
+  else if(diff>0){ v.textContent='흑 '+diff.toFixed(1)+'집 우세'; v.className='verdict b'; }
+  else { v.textContent='백 '+(-diff).toFixed(1)+'집 우세'; v.className='verdict w'; }
+  $('estNums').innerHTML =
+    `흑 ${s.black.toFixed(1)} <small style="color:var(--ink-faint)">(돌 ${s.bStones}·세력 ${s.bTerr})</small>`+
+    ` · 백 ${s.white.toFixed(1)} <small style="color:var(--ink-faint)">(돌 ${s.wStones}·세력 ${s.wTerr}·덤 ${KOMI})</small>`+
+    `<br>미확정 ${s.neutral}곳`;
+  $('estimate').classList.add('show');
+  clearTimeout(estTimer); estTimer=setTimeout(clearEstimate, 8000);
+}
+
+/* ---------- 종료 ---------- */
+function endGame(reason, loser){
+  gameOver=true; busy=false; $('thinking').classList.remove('show');
+  let line, detail;
+  if(reason==='resign'){
+    const winner=3-loser;
+    line=(winner===BLACK?'흑 불계승':'백 불계승');
+    detail=(loser===BLACK?'흑':'백')+' 기권';
+  }else{
+    const s=score();
+    const diff=Math.abs(s.black-s.white);
+    if(s.black>s.white){ line='흑 '+diff.toFixed(1)+'집 승'; }
+    else { line='백 '+diff.toFixed(1)+'집 승'; }
+    detail=`흑 ${s.black.toFixed(1)}집 (돌 ${s.bs} · 집 ${s.bt})<br>백 ${s.white.toFixed(1)}집 (돌 ${s.ws} · 집 ${s.wt} · 덤 ${KOMI})`;
+  }
+  $('resultLine').textContent=line;
+  $('resultDetail').innerHTML=detail;
+  $('resultScrim').classList.add('show');
+}
+
+/* ---------- 렌더 ---------- */
+function render(captured){
+  // 기존 돌/표식 제거
+  pointsEl.querySelectorAll('.stone:not(.ghost), .last-mark').forEach(e=>e.remove());
+  // 따낸 돌 애니메이션 (방금 잡힌 돌의 색 = 직전 착수자의 상대 = 현재 turn)
+  if(captured&&captured.length){
+    const capColor = (turn===BLACK) ? 'black' : 'white';
+    for(const [cx,cy] of captured){
+      const pt=pointsEl.children[idx(cx,cy)];
+      const s=document.createElement('div');
+      s.className='stone captured '+capColor;
+      s.style.width=STONE+'%';s.style.height=STONE+'%';
+      pt.appendChild(s); setTimeout(()=>s.remove(),240);
+    }
+  }
+  for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+    const v=board[idx(x,y)]; if(v===EMPTY)continue;
+    const pt=pointsEl.children[idx(x,y)];
+    const s=document.createElement('div');
+    s.className='stone '+(v===BLACK?'black':'white');
+    s.style.width=STONE+'%'; s.style.height=STONE+'%';
+    if(lastMove&&lastMove[0]===x&&lastMove[1]===y) s.classList.add('place');
+    pt.appendChild(s);
+    if(lastMove&&lastMove[0]===x&&lastMove[1]===y){
+      const m=document.createElement('div');
+      m.className='last-mark '+(v===BLACK?'on-black':'on-white');
+      pt.appendChild(m);
+    }
+  }
+}
+
+function preview(x,y,pt){
+  if(busy||gameOver)return;
+  if(mode==='ai'&&turn!==myColor)return;
+  if(board[idx(x,y)]!==EMPTY)return;
+  const r=simulate(board,x,y,turn,koPoint); if(!r.legal)return;
+  const g=document.createElement('div');
+  g.className='stone ghost '+(turn===BLACK?'black':'white');
+  g.style.width=STONE+'%';g.style.height=STONE+'%';
+  pt.appendChild(g);
+}
+
+function updateStatus(){
+  $('blackCaps').textContent=caps[BLACK];
+  $('whiteCaps').textContent=caps[WHITE];
+  $('capBlack').classList.toggle('active',turn===BLACK&&!gameOver);
+  $('capWhite').classList.toggle('active',turn===WHITE&&!gameOver);
+  $('undoBtn').disabled=history.length===0;
+}
+
+/* ---------- 소리 (Web Audio 합성) ---------- */
+let actx=null;
+function ensureAudio(){ if(!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}} if(actx&&actx.state==='suspended')actx.resume(); }
+function noiseBuffer(dur){
+  const len=actx.sampleRate*dur; const buf=actx.createBuffer(1,len,actx.sampleRate);
+  const d=buf.getChannelData(0); for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2);
+  return buf;
+}
+function playStone(){
+  if(!soundOn||!actx)return; const t=actx.currentTime;
+  // 나무판에 돌 놓는 '딱'
+  const src=actx.createBufferSource(); src.buffer=noiseBuffer(0.05);
+  const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1600+Math.random()*500; bp.Q.value=0.9;
+  const g=actx.createGain(); g.gain.setValueAtTime(0.9,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.06);
+  src.connect(bp).connect(g).connect(actx.destination); src.start(t); src.stop(t+0.06);
+  // 나무 울림
+  const o=actx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(190+Math.random()*40,t);
+  const g2=actx.createGain(); g2.gain.setValueAtTime(0.5,t); g2.gain.exponentialRampToValueAtTime(0.001,t+0.09);
+  o.connect(g2).connect(actx.destination); o.start(t); o.stop(t+0.1);
+  // 짧은 클릭
+  const o2=actx.createOscillator(); o2.type='triangle'; o2.frequency.setValueAtTime(2600,t);
+  const g3=actx.createGain(); g3.gain.setValueAtTime(0.28,t); g3.gain.exponentialRampToValueAtTime(0.001,t+0.025);
+  o2.connect(g3).connect(actx.destination); o2.start(t); o2.stop(t+0.03);
+}
+function playCapture(n){
+  playStone();
+  if(!soundOn||!actx)return; const t=actx.currentTime;
+  for(let i=0;i<Math.min(n,4);i++){
+    const dt=0.04+i*0.045;
+    const src=actx.createBufferSource(); src.buffer=noiseBuffer(0.04);
+    const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1200+Math.random()*400;
+    const g=actx.createGain(); g.gain.setValueAtTime(0.5,t+dt); g.gain.exponentialRampToValueAtTime(0.001,t+dt+0.05);
+    src.connect(bp).connect(g).connect(actx.destination); src.start(t+dt); src.stop(t+dt+0.05);
+  }
+}
+// 단수 경고 — 맑게 울리는 두 음(C6→G6)으로 착수음과 확실히 구분
+function playAtari(){
+  if(!soundOn||!actx)return; const t=actx.currentTime;
+  const notes=[1046.5, 1568.0];   // C6, G6
+  notes.forEach((f,i)=>{
+    const st=t+0.02+i*0.07;
+    const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f;
+    const o2=actx.createOscillator(); o2.type='sine'; o2.frequency.value=f*2; // 배음
+    const g=actx.createGain();
+    g.gain.setValueAtTime(0.0001,st);
+    g.gain.exponentialRampToValueAtTime(0.22,st+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,st+0.34);
+    const g2=actx.createGain();
+    g2.gain.setValueAtTime(0.0001,st);
+    g2.gain.exponentialRampToValueAtTime(0.06,st+0.012);
+    g2.gain.exponentialRampToValueAtTime(0.0001,st+0.22);
+    o.connect(g).connect(actx.destination); o2.connect(g2).connect(actx.destination);
+    o.start(st); o.stop(st+0.36); o2.start(st); o2.stop(st+0.24);
+  });
+}
+
+/* ---------- 토스트 ---------- */
+let toastT;
+function toast(msg){ const el=$('toast'); el.textContent=msg; el.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),1500); }
+
+/* ---------- 새 대국 ---------- */
+function newGame(){
+  N=boardSize; setupBoard();                 // 선택한 크기로 격자·교차점 재생성
+  board=new Array(N*N).fill(EMPTY);
+  turn=BLACK; caps={[BLACK]:0,[WHITE]:0}; koPoint=null; lastMove=null;
+  history=[]; passes=0; gameOver=false; busy=false; clearHint(); clearEstimate();
+  $('blackLabel').textContent = mode==='pvp'?'플레이어 1':(myColor===BLACK?'플레이어':'컴퓨터');
+  $('whiteLabel').textContent = mode==='pvp'?'플레이어 2':(myColor===WHITE?'플레이어':'컴퓨터');
+  render([]); updateStatus();
+  if(mode==='ai'&&turn!==myColor) scheduleAI();
+}
+
+/* ---------- 설정 UI ---------- */
+function setupSeg(segId, attr, cb, redSel){
+  $(segId).addEventListener('click',e=>{
+    const b=e.target.closest('button'); if(!b)return;
+    [...e.currentTarget.children].forEach(c=>c.classList.remove('sel','red'));
+    b.classList.add('sel'); if(redSel)b.classList.add('red');
+    cb(b.dataset[attr]);
+  });
+}
+setupSeg('sizeSeg','size',v=>boardSize=+v);
+setupSeg('modeSeg','mode',v=>{ mode=v; $('levelField').classList.toggle('hidden',v!=='ai'); $('colorField').classList.toggle('hidden',v!=='ai'); }, true);
+setupSeg('levelSeg','level',v=>level=+v);
+setupSeg('colorSeg','color',v=>myColor=+v);
+
+/* ---------- 힌트 ---------- */
+let hintTimer;
+function clearHint(){ pointsEl.querySelectorAll('.hint-ring,.hint-ghost').forEach(e=>e.remove()); }
+function coordName(x,y){ const L="ABCDEFGHJKLMNOPQRST"; return L[x]+(N-y); }
+function hint(){
+  if(busy||gameOver) return;
+  if(mode==='ai' && turn!==myColor){ toast('상대 차례입니다'); return; }
+  clearHint(); clearEstimate();
+  $('thinkingText').textContent='좋은 수 찾는 중…';
+  $('thinking').classList.add('show'); busy=true;
+  setTimeout(()=>{
+    const mv=chooseAI(board,turn,koPoint,3);   // 항상 최고 수준으로 추천
+    $('thinking').classList.remove('show'); busy=false;
+    if(!mv){ toast('마땅한 자리가 없습니다 — 한 수 쉬어도 좋아요'); return; }
+    const pt=pointsEl.children[idx(mv[0],mv[1])];
+    const ghost=document.createElement('div');
+    ghost.className='stone ghost hint-ghost '+(turn===BLACK?'black':'white');
+    ghost.style.width=STONE+'%'; ghost.style.height=STONE+'%';
+    const ring=document.createElement('div'); ring.className='hint-ring';
+    pt.appendChild(ghost); pt.appendChild(ring);
+    toast('추천 착점 · '+coordName(mv[0],mv[1]));
+    clearTimeout(hintTimer); hintTimer=setTimeout(clearHint,4500);
+  },30);
+}
+
+$('startBtn').addEventListener('click',()=>{ ensureAudio(); $('setupScrim').classList.remove('show'); newGame(); });
+$('resultNew').addEventListener('click',()=>{ $('resultScrim').classList.remove('show'); $('setupScrim').classList.add('show'); });
+$('menuBtn').addEventListener('click',()=>{ $('setupScrim').classList.add('show'); });
+$('newBtn').addEventListener('click',()=>{ $('setupScrim').classList.add('show'); });
+$('hintBtn').addEventListener('click',hint);
+$('estBtn').addEventListener('click',showEstimate);
+$('estClose').addEventListener('click',clearEstimate);
+$('undoBtn').addEventListener('click',undo);
+$('passBtn').addEventListener('click',doPass);
+$('resignBtn').addEventListener('click',()=>{ if(!gameOver&&confirm('기권하시겠습니까?'))resign(); });
+$('soundBtn').addEventListener('click',()=>{ soundOn=!soundOn; ensureAudio(); const b=$('soundBtn'); b.textContent=soundOn?'🔊':'🔇'; b.classList.toggle('on',soundOn); });
+document.body.addEventListener('touchstart',ensureAudio,{once:true});
+document.body.addEventListener('click',ensureAudio,{once:true});
+
+/* ---------- 설치 안내 ---------- */
+let deferredPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{ e.preventDefault(); deferredPrompt=e; showInstallHint('android'); });
+function showInstallHint(kind){
+  const el=$('installHint');
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  if(standalone){ el.textContent=''; return; }
+  const isIOS=/iphone|ipad|ipod/i.test(navigator.userAgent);
+  if(deferredPrompt){
+    el.innerHTML='📱 <u>홈 화면에 앱으로 설치하기</u>';
+    el.style.cursor='pointer';
+    el.onclick=async()=>{ deferredPrompt.prompt(); await deferredPrompt.userChoice; deferredPrompt=null; el.textContent=''; };
+  }else if(isIOS){
+    el.innerHTML='📱 아이폰: 하단 <b>공유</b> 버튼 → <b>홈 화면에 추가</b>';
+  }else{
+    el.innerHTML='📱 브라우저 메뉴 → <b>홈 화면에 추가 / 앱 설치</b>';
+  }
+}
+
+/* ---------- 서비스워커 등록 (설치/오프라인) ---------- */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+
+/* ---------- 초기화 ---------- */
+setupBoard();
+board=new Array(N*N).fill(EMPTY); turn=BLACK; caps={[BLACK]:0,[WHITE]:0}; history=[]; gameOver=false; koPoint=null; lastMove=null; passes=0;
+render([]); updateStatus(); showInstallHint();
+</script>
+</body>
+</html>
