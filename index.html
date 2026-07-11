@@ -1028,20 +1028,59 @@ function chooseAI(b,color,ko,lv){
 }
 
 /* ---------- 집 계산 ---------- */
+// ── 사활 판정: 자기만의 '작은 외눈(이어진 ≤3집)'으로 완전히 둘러싸인 그룹은 죽은 것 ──
+// (두 눈=분리된 두 집이면 삶으로 유지. 바깥 자유도/공유 자유도가 있으면 안전하게 건드리지 않음.)
+function findDeadStones(b){
+  const NN=N*N, dead=new Set();
+  const regId=new Int32Array(NN).fill(-1); const regions=[];
+  for(let i=0;i<NN;i++){
+    if(b[i]===EMPTY && regId[i]<0){
+      const id=regions.length; const stack=[i]; regId[i]=id; let size=0;
+      while(stack.length){ const c=stack.pop(); size++; const cx=c%N,cy=(c/N)|0;
+        for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===EMPTY && regId[n]<0){regId[n]=id; stack.push(n);} } }
+      regions.push({size, border:new Set()});
+    }
+  }
+  for(let i=0;i<NN;i++){ if(b[i]===EMPTY){ const cx=i%N,cy=(i/N)|0;
+    for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]!==EMPTY) regions[regId[i]].border.add(b[n]); } } }
+  const seen=new Uint8Array(NN);
+  for(let i=0;i<NN;i++){
+    if(b[i]!==EMPTY && !seen[i]){
+      const c=b[i]; const chain=[]; const stack=[i]; seen[i]=1; const adjReg=new Set();
+      while(stack.length){ const cur=stack.pop(); chain.push(cur); const cx=cur%N,cy=(cur/N)|0;
+        for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx;
+          if(b[n]===c && !seen[n]){seen[n]=1; stack.push(n);}
+          else if(b[n]===EMPTY){ adjReg.add(regId[n]); } } }
+      if(adjReg.size===0) continue;
+      let allPrivate=true; const privateEyes=[];
+      for(const rid of adjReg){ const reg=regions[rid];
+        if(reg.border.size===1 && reg.border.has(c)) privateEyes.push(reg); else allPrivate=false; }
+      if(!allPrivate) continue;                 // 바깥/공유 자유도 있음 → 죽음 아님
+      if(privateEyes.length>=2) continue;       // 두 눈 → 삶
+      if(privateEyes.length===1 && privateEyes[0].size<=3){
+        for(const s of chain) dead.add(s);      // 외눈(≤3집) 완전포위 → 죽음
+      }
+    }
+  }
+  return dead;
+}
+
 function score(){
+  const b=board.slice();
+  for(const k of findDeadStones(b)) b[k]=EMPTY;   // 죽은 돌 제거 → 상대 집으로 산정
   let bs=0,ws=0,bt=0,wt=0;
   const seen=new Array(N*N).fill(false);
-  for(let i=0;i<N*N;i++){ if(board[i]===BLACK)bs++; else if(board[i]===WHITE)ws++; }
+  for(let i=0;i<N*N;i++){ if(b[i]===BLACK)bs++; else if(b[i]===WHITE)ws++; }
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const k=idx(x,y); if(board[k]!==EMPTY||seen[k])continue;
+    const k=idx(x,y); if(b[k]!==EMPTY||seen[k])continue;
     const region=[]; const stack=[[x,y]]; const borders=new Set();
     while(stack.length){
       const [cx,cy]=stack.pop(); const ck=idx(cx,cy);
       if(seen[ck])continue; seen[ck]=true; region.push(ck);
       for(const [nx,ny] of neighbors(cx,cy)){
         const nk=idx(nx,ny);
-        if(board[nk]===EMPTY){ if(!seen[nk])stack.push([nx,ny]); }
-        else borders.add(board[nk]);
+        if(b[nk]===EMPTY){ if(!seen[nk])stack.push([nx,ny]); }
+        else borders.add(b[nk]);
       }
     }
     if(borders.size===1){ if(borders.has(BLACK))bt+=region.length; else wt+=region.length; }
@@ -1055,17 +1094,19 @@ function score(){
    영향력 = Σ 부호(색)/(1+거리²).  임계값 미만이면 '미정(중립)'.
    집계는 중국식 area 방식: 예상집 = 자기 돌 수 + 자기 세력권 + (백은 덤).      */
 function estimateScore(){
+  const b=board.slice();
+  for(const k of findDeadStones(b)) b[k]=EMPTY;   // 죽은 그룹 제거 후 세력 계산
   const owner=new Int8Array(N*N);           // 0 미정, 1 흑, 2 백
   const stones=[];
   let bStones=0, wStones=0;
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    const v=board[idx(x,y)];
+    const v=b[idx(x,y)];
     if(v!==EMPTY){ stones.push([x,y,v]); if(v===BLACK)bStones++; else wStones++; }
   }
   const TH=0.16;                            // 중립 판정 임계
   let bTerr=0, wTerr=0, neutral=0;
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
-    if(board[idx(x,y)]!==EMPTY) continue;
+    if(b[idx(x,y)]!==EMPTY) continue;
     let s=0;
     for(const [sx,sy,v] of stones){
       const dx=sx-x, dy=sy-y, d2=dx*dx+dy*dy;
