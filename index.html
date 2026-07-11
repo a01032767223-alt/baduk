@@ -906,7 +906,7 @@ function mctsMove(rootB,rootColor,rootKo,timeMs,minIter){
     for(const m of root.untried){ const k=m[1]*N+m[0]; if(!merged.some(q=>q[1]*N+q[0]===k)) merged.push(m); }
     root.untried=merged;
   })();
-  // 상대 완성집(작은 상대 전용 빈 영역)에 헛되이 들어가는 수 제거 — 2집 못 내면 들어가지 않음
+  // 헛수 제거: (a) 자기 집·눈 메우기(집 손해), (b) 살 수 없는 작은 상대집 침입. 단 따냄/단수 공격은 허용.
   root.untried = root.untried.filter(m=>{
     if(m[0]===-1) return true;
     const opp=3-rootColor;
@@ -914,21 +914,26 @@ function mctsMove(rootB,rootColor,rootKo,timeMs,minIter){
     while(stack.length){
       const k=stack.pop(); if(seen.has(k))continue; seen.add(k);
       const cx=k%N, cy=(k/N)|0; size++;
-      if(size>6){ big=true; break; }                 // 큰 영역이면 침입 허용
+      if(size>20){ big=true; break; }                 // 큰 미확정 영역이면 허용
       if(cx>0){const n=k-1; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
       if(cx<N-1){const n=k+1; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
       if(cy>0){const n=k-N; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
       if(cy<N-1){const n=k+N; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
     }
-    if(big || bord.size!==1 || !bord.has(opp)) return true;   // 작은 상대집이 아니면 허용
-    // 작은 상대집이어도 '공격적'(따냄/상대 단수)이면 허용, 순수 헛침입만 제거
+    if(big) return true;
+    const onlyOwn = (bord.size===1 && bord.has(rootColor));
+    const onlyOpp = (bord.size===1 && bord.has(opp));
+    if(!onlyOwn && !onlyOpp) return true;              // 경계 혼합(중립·경계) → 허용
     const r=simulate(rootB,m[0],m[1],rootColor,rootKo);
     if(!r.legal) return false;
-    if(r.captured.length>0) return true;                      // 따냄
-    for(const [nx,ny] of neighbors(m[0],m[1])){
-      if(r.b[idx(nx,ny)]===opp && group(r.b,nx,ny).libs===1) return true;  // 상대 단수 유발 → 공격 허용
+    if(r.captured.length>0) return true;               // 따냄은 항상 허용
+    if(onlyOwn) return false;                          // 내 집·눈 메우기 금지
+    // onlyOpp(상대 집):
+    if(size>6) return true;                            // 큰 상대집 → 침입 허용
+    for(const [nx,ny] of neighbors(m[0],m[1])){        // 작은 상대집: 단수 유발이면 공격 허용
+      if(r.b[idx(nx,ny)]===opp && group(r.b,nx,ny).libs===1) return true;
     }
-    return false;                                             // 순수 헛침입만 제거
+    return false;                                      // 순수 헛침입만 제거
   });
   // 종반엔 '착수 포기'도 후보에 — 이득 없으면 두지 않고 넘김
   { let filled=0; for(let i=0;i<N*N;i++) if(rootB[i]!==EMPTY) filled++;
@@ -974,9 +979,26 @@ function mctsMove(rootB,rootColor,rootKo,timeMs,minIter){
     if(!root.untried.length) return null;
     const m0=root.untried[0]; return (m0[0]===-1)?'pass':m0;
   }
+  // 최다 방문을 기본 최선으로
   let best=root.children[0];
   for(const ch of root.children) if(ch.visits>best.visits) best=ch;
-  return (best.move && best.move[0]===-1) ? 'pass' : best.move;
+  if(best.move && best.move[0]===-1) return 'pass';          // 포기가 최선이면 포기
+  // 공격성 가미: 최선 승률에 근접(−0.02)하고 충분히 탐색된 수들 중 가장 공격적인 수 선택
+  const rc=rootColor, wr=ch=>(rc===BLACK)?(ch.bWins/ch.visits):(1-ch.bWins/ch.visits);
+  const maxV=best.visits, bestWR=wr(best), opp=3-rc;
+  let pick=best, bestAgg=-1;
+  for(const ch of root.children){
+    if(!ch.move || ch.move[0]===-1) continue;
+    if(ch.visits < maxV*0.35 || wr(ch) < bestWR-0.02) continue;
+    const r=simulate(rootB,ch.move[0],ch.move[1],rootColor,rootKo);
+    if(!r.legal) continue;
+    let a=r.captured.length*10;                              // 따냄 최우선
+    for(const [nx,ny] of neighbors(ch.move[0],ch.move[1])){
+      if(r.b[idx(nx,ny)]===opp){ a+=1; if(group(r.b,nx,ny).libs===1) a+=5; if(group(r.b,nx,ny).libs===2) a+=1.5; }
+    }
+    if(a>bestAgg){ bestAgg=a; pick=ch; }
+  }
+  return pick.move;
 }
 
 function chooseAI(b,color,ko,lv){
