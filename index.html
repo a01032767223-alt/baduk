@@ -557,8 +557,10 @@ function scheduleAI(){
   busy=true;
   $('thinkingText').textContent=(turn===BLACK?'흑':'백')+' 생각 중…';
   $('thinking').classList.add('show');
-  // 고급은 계산 자체가 오래 걸리므로 인위적 대기는 짧게, 하위 레벨은 자연스럽게
-  const delay = (level===3) ? (90 + Math.random()*140) : (320 + Math.random()*380);
+  // 상위 레벨은 탐색 계산이 오래 걸리므로 인위적 대기는 최소화, 초급만 자연스러운 짧은 뜸
+  const delay = (level===1) ? (200 + Math.random()*260)
+              : (level===2) ? (60  + Math.random()*110)
+              :               (40  + Math.random()*90);
   setTimeout(()=>{
     const mv=chooseAI(board,turn,koPoint,level);
     $('thinking').classList.remove('show');
@@ -689,104 +691,318 @@ function areaMargin(b){
   }
   return (bs+bt)-(ws+wt+KOMI);
 }
-// 한 판 무작위 대국(자기 눈은 안 메움 → 그룹이 눈을 지켜 산 채로 종국). 흑-백 집 차 반환.
-function playout(b0,color0,ko0){
-  let b=b0.slice(), color=color0, ko=ko0, passes=0, steps=0;
+// 그룹이 단수(자유도1)면 그 유일한 자유점 좌표 반환
+function atariLiberty(b,gx,gy){
+  const g=group(b,gx,gy);
+  if(g.libs!==1) return null;
+  for(const [sx,sy] of g.stones)
+    for(const [nx,ny] of neighbors(sx,sy))
+      if(b[idx(nx,ny)]===EMPTY) return [nx,ny];
+  return null;
+}
+// 직전 착수 주변의 단수 상황에 대응(따냄 / 도망) — 플레이아웃 품질을 크게 높인다
+function tacticalMove(b,color,ko,last){
+  const lx=last%N, ly=(last-lx)/N, opp=3-color, cands=[];
+  const around=[[lx,ly]]; for(const nb of neighbors(lx,ly)) around.push(nb);
+  for(const [px,py] of around){
+    const v=b[idx(px,py)];
+    if(v===opp){                                   // 상대 단수 → 따냄
+      const lp=atariLiberty(b,px,py);
+      if(lp){ const r=simulate(b,lp[0],lp[1],color,ko); if(r.legal&&r.captured.length>0) cands.push(lp); }
+    } else if(v===color){                          // 내 단수 → 도망(자유도 확보/따냄)
+      const lp=atariLiberty(b,px,py);
+      if(lp){ const r=simulate(b,lp[0],lp[1],color,ko); if(r.legal&&(r.captured.length>0||group(r.b,lp[0],lp[1]).libs>=2)) cands.push(lp); }
+    }
+  }
+  return cands.length? cands[(Math.random()*cands.length)|0] : null;
+}
+function randomMove(b,color,ko){
+  for(let t=0;t<8;t++){
+    const p=(Math.random()*(N*N))|0;
+    if(b[p]!==EMPTY) continue;
+    const x=p%N, y=(p-x)/N;
+    if(isEyeLike(b,x,y,color)) continue;
+    const r=simulate(b,x,y,color,ko);
+    if(!r.legal) continue;
+    if(r.captured.length===0 && group(r.b,x,y).libs===1) continue;
+    return [x,y];
+  }
+  return null;
+}
+// 전술 규칙이 가미된 플레이아웃 → 흑-백 집 차
+function heavyPlayout(b0,color0,ko0){
+  let b=b0.slice(), color=color0, ko=ko0, passes=0, steps=0, last=-1;
   const maxSteps=N*N*2+10;
   while(passes<2 && steps<maxSteps){
-    let played=false;
-    for(let t=0;t<8;t++){
-      const p=(Math.random()*(N*N))|0;
-      if(b[p]!==EMPTY) continue;
-      const x=p%N, y=(p-x)/N;
-      if(isEyeLike(b,x,y,color)) continue;                          // 자기 눈 보호
-      const r=simulate(b,x,y,color,ko);
-      if(!r.legal) continue;
-      if(r.captured.length===0 && group(r.b,x,y).libs===1) continue; // 자충 회피
-      b=r.b; ko=r.ko; played=true; break;
-    }
-    if(played) passes=0; else { passes++; ko=null; }
+    let mv=null;
+    if(last>=0 && Math.random()<0.85) mv=tacticalMove(b,color,ko,last);
+    if(!mv) mv=randomMove(b,color,ko);
+    if(mv){ const r=simulate(b,mv[0],mv[1],color,ko); b=r.b; ko=r.ko; last=mv[1]*N+mv[0]; passes=0; }
+    else { passes++; ko=null; last=-1; }
     color=3-color; steps++;
   }
   return areaMargin(b);
 }
-// 후보마다 sims회 플레이아웃 → 승률 최고 수 선택
-function montecarloMove(b,color,ko,sims,M){
-  const legal=legalMoves(b,color,ko);
-  if(legal.length===0) return null;
-  let scored=legal.filter(m=>!isEyeLike(b,m[0],m[1],color))
-                  .map(m=>({m,s:evalMove(b,m[0],m[1],color,ko)}))
-                  .sort((a,b)=>b.s-a.s);
-  if(scored.length===0) scored=legal.map(m=>({m,s:0}));
-  const cand=scored.slice(0,Math.min(M,scored.length)).map(o=>o.m);
-  let best=cand[0], bestWR=-1;
-  for(const m of cand){
-    const r=simulate(b,m[0],m[1],color,ko);
-    let win=0;
-    for(let s=0;s<sims;s++){
-      const margin=playout(r.b,3-color,r.ko);
-      const my = (color===BLACK)? margin : -margin;
-      win += my>0 ? 1 : (my===0 ? 0.5 : 0);
-    }
-    const wr=win/sims;
-    if(wr>bestWR){ bestWR=wr; best=m; }
+
+// ── UCT 몬테카를로 트리 탐색 ──
+// ══════════ 빠른 플레이아웃 엔진 (제자리 방식 — 시뮬레이션 처리량 대폭 향상) ══════════
+// 진짜 눈(참눈): 상하좌우가 모두 아군/판밖, 대각도 충분히 아군이어야 함
+function isTrueEye(b,x,y,color){
+  if(x>0    && b[y*N+x-1]!==color) return false;
+  if(x<N-1  && b[y*N+x+1]!==color) return false;
+  if(y>0    && b[(y-1)*N+x]!==color) return false;
+  if(y<N-1  && b[(y+1)*N+x]!==color) return false;
+  let dcol=0, doff=0;
+  const dg=[[-1,-1],[1,-1],[-1,1],[1,1]];
+  for(let i=0;i<4;i++){ const nx=x+dg[i][0], ny=y+dg[i][1];
+    if(nx<0||nx>=N||ny<0||ny>=N){ doff++; continue; }
+    if(b[ny*N+nx]===color) dcol++;
   }
-  return best;
+  return doff>0 ? (dcol===4-doff) : (dcol>=3);
+}
+// 그룹이 자유도(빈 이웃)를 하나라도 가지는가 (조기 종료 BFS)
+function groupHasLib(b,start,color){
+  const seen=new Uint8Array(N*N); const st=[start]; seen[start]=1;
+  while(st.length){
+    const c=st.pop(), cx=c%N, cy=(c/N)|0;
+    if(cx>0){const n=c-1; if(b[n]===EMPTY)return true; if(b[n]===color&&!seen[n]){seen[n]=1;st.push(n);}}
+    if(cx<N-1){const n=c+1; if(b[n]===EMPTY)return true; if(b[n]===color&&!seen[n]){seen[n]=1;st.push(n);}}
+    if(cy>0){const n=c-N; if(b[n]===EMPTY)return true; if(b[n]===color&&!seen[n]){seen[n]=1;st.push(n);}}
+    if(cy<N-1){const n=c+N; if(b[n]===EMPTY)return true; if(b[n]===color&&!seen[n]){seen[n]=1;st.push(n);}}
+  }
+  return false;
+}
+// 그룹이 죽었으면(자유도 0) 제거하고 제거 수 반환
+function captureIfDead(b,start,color){
+  const seen=new Uint8Array(N*N); const cells=[start]; seen[start]=1; let lib=false;
+  for(let i=0;i<cells.length;i++){
+    const c=cells[i], cx=c%N, cy=(c/N)|0;
+    if(cx>0){const n=c-1; if(b[n]===EMPTY)lib=true; else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+    if(cx<N-1){const n=c+1; if(b[n]===EMPTY)lib=true; else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+    if(cy>0){const n=c-N; if(b[n]===EMPTY)lib=true; else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+    if(cy<N-1){const n=c+N; if(b[n]===EMPTY)lib=true; else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+  }
+  if(lib) return 0;
+  for(let i=0;i<cells.length;i++) b[cells[i]]=EMPTY;
+  return cells.length;
+}
+// 제자리 착수(패는 무시 — 플레이아웃 전용). 성공 시 true, 자살수면 되돌리고 false.
+// 제자리 착수(패 무시). -1=자살수(불가), 그 외=따낸 돌 수(0 이상)
+function tryPlayFast(b,x,y,color){
+  const k=y*N+x, opp=3-color;
+  let emptyNb=false;
+  const nb=[]; if(x>0)nb.push(k-1); if(x<N-1)nb.push(k+1); if(y>0)nb.push(k-N); if(y<N-1)nb.push(k+N);
+  for(let i=0;i<nb.length;i++) if(b[nb[i]]===EMPTY){emptyNb=true;break;}
+  b[k]=color;
+  let cap=0;
+  for(let i=0;i<nb.length;i++){ const n=nb[i]; if(b[n]===opp) cap+=captureIfDead(b,n,opp); }
+  if(cap>0) return cap;
+  if(emptyNb) return 0;
+  if(groupHasLib(b,k,color)) return 0;
+  b[k]=EMPTY; return -1;                     // 자살수
+}
+// 그룹이 단수면 그 유일 자유점 인덱스, 아니면 -1 (빠른 버전)
+function atariLibFast(b,start,color){
+  const seen=new Uint8Array(N*N); const cells=[start]; seen[start]=1; let lib=-1;
+  for(let i=0;i<cells.length;i++){
+    const c=cells[i], cx=c%N, cy=(c/N)|0;
+    if(cx>0){const n=c-1; if(b[n]===EMPTY){if(lib===-1)lib=n; else if(lib!==n)return -1;} else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+    if(cx<N-1){const n=c+1; if(b[n]===EMPTY){if(lib===-1)lib=n; else if(lib!==n)return -1;} else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+    if(cy>0){const n=c-N; if(b[n]===EMPTY){if(lib===-1)lib=n; else if(lib!==n)return -1;} else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+    if(cy<N-1){const n=c+N; if(b[n]===EMPTY){if(lib===-1)lib=n; else if(lib!==n)return -1;} else if(b[n]===color&&!seen[n]){seen[n]=1;cells.push(n);}}
+  }
+  return lib;
+}
+// 직전 착수 주변의 단수에 대응: 상대 단수면 따냄, 내 단수면 도망. 자유점 인덱스 or -1
+function fastAtariResponse(b,color,last){
+  const lx=last%N, ly=(last/N)|0, opp=3-color, cands=[];
+  const around=[last];
+  if(lx>0)around.push(last-1); if(lx<N-1)around.push(last+1);
+  if(ly>0)around.push(last-N); if(ly<N-1)around.push(last+N);
+  for(const c of around){
+    const v=b[c]; if(v===EMPTY) continue;
+    const lib=atariLibFast(b,c,v);
+    if(lib<0) continue;
+    if(v===opp || v===color) cands.push(lib);   // 상대면 따냄, 나면 도망(같은 급소)
+  }
+  return cands.length ? cands[(Math.random()*cands.length)|0] : -1;
+}
+// 빠른 플레이아웃 + 단수 대응 + 자충 회피 → 흑-백 집 차
+function fastPlayout(b0,color){
+  const b=Int8Array.from(b0);
+  let passes=0, steps=0, last=-1; const max=N*N*2+10;
+  while(passes<2 && steps<max){
+    let mv=-1;
+    if(last>=0 && Math.random()<0.85){                    // 단수 급소 우선 대응
+      const a=fastAtariResponse(b,color,last);
+      if(a>=0){ const ax=a%N, ay=(a/N)|0;
+        if(!isTrueEye(b,ax,ay,color) && tryPlayFast(b,ax,ay,color)>=0) mv=a; }
+    }
+    if(mv<0){                                             // 아니면 무작위(참눈 제외 + 자충 회피)
+      for(let t=0;t<12;t++){
+        const p=(Math.random()*(N*N))|0;
+        if(b[p]!==EMPTY) continue;
+        const x=p%N, y=(p/N)|0;
+        if(isTrueEye(b,x,y,color)) continue;
+        const res=tryPlayFast(b,x,y,color);
+        if(res<0) continue;
+        if(res===0){                                      // 안 잡은 수: 자충(단수 자멸)이면 되돌리고 회피
+          let e=0;
+          if(x>0&&b[p-1]===EMPTY)e++; if(x<N-1&&b[p+1]===EMPTY)e++;
+          if(y>0&&b[p-N]===EMPTY)e++; if(y<N-1&&b[p+N]===EMPTY)e++;
+          if(e<2 && Math.random()<0.9 && atariLibFast(b,p,color)>=0){ b[p]=EMPTY; continue; }
+        }
+        mv=p; break;
+      }
+    }
+    if(mv>=0){ passes=0; last=mv; } else { passes++; last=-1; }
+    color=3-color; steps++;
+  }
+  return areaMargin(b);
+}
+
+function mctsMove(rootB,rootColor,rootKo,timeMs,minIter){
+  const preM=(N<=9?18:N<=13?16:14);   // 루트 1차(지역) 후보 폭
+  const rootM=(N<=9?14:N<=13?12:10);  // 루트 세력 후보 폭
+  const deepM=(N<=9?12:N<=13?10:8);   // 깊은 노드 후보(저렴하게)
+  function shuffle(a){ for(let i=a.length-1;i>0;i--){const j=(Math.random()*(i+1))|0; const t=a[i];a[i]=a[j];a[j]=t;} }
+  function cheapCands(b,color){                 // 저렴한 후보: 참눈 제외, 돌 인접 우선
+    const near=[], far=[];
+    for(let p=0;p<N*N;p++){
+      if(b[p]!==EMPTY) continue;
+      const x=p%N, y=(p/N)|0;
+      if(isTrueEye(b,x,y,color)) continue;
+      let adj=false;
+      if(x>0&&b[p-1]!==EMPTY)adj=true; else if(x<N-1&&b[p+1]!==EMPTY)adj=true;
+      else if(y>0&&b[p-N]!==EMPTY)adj=true; else if(y<N-1&&b[p+N]!==EMPTY)adj=true;
+      (adj?near:far).push([x,y]);
+    }
+    shuffle(near); shuffle(far);
+    return near.concat(far).slice(0,deepM);
+  }
+  function cand(b,color,ko,isRoot){
+    return isRoot ? candidatesByArea(b,color,ko,preM,rootM) : cheapCands(b,color);
+  }
+  function mkNode(b,toMove,ko,move,isRoot){
+    return {b,toMove,ko,move,visits:0,bWins:0,children:[],untried:cand(b,toMove,ko,isRoot)};
+  }
+  const root=mkNode(rootB,rootColor,rootKo,null,true);
+  // 루트에 전술 급소(즉시 따냄·내 단수 도망)를 최우선 주입 — 급소를 절대 놓치지 않게
+  (function(){
+    const tac=[];
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+      const v=rootB[idx(x,y)];
+      if(v===EMPTY) continue;
+      const lp=atariLiberty(rootB,x,y);
+      if(!lp) continue;
+      const r=simulate(rootB,lp[0],lp[1],rootColor,rootKo);
+      if(!r.legal) continue;
+      if(v===3-rootColor && r.captured.length>0) tac.push(lp);                                  // 상대 그룹 따냄
+      else if(v===rootColor && (r.captured.length>0 || group(r.b,lp[0],lp[1]).libs>=2)) tac.push(lp); // 내 그룹 구출
+    }
+    const seen=new Set(root.untried.map(m=>m[1]*N+m[0]));
+    const merged=[];
+    for(const m of tac){ const k=m[1]*N+m[0]; if(!merged.some(q=>q[1]*N+q[0]===k)) merged.push(m); }
+    for(const m of root.untried){ const k=m[1]*N+m[0]; if(!merged.some(q=>q[1]*N+q[0]===k)) merged.push(m); }
+    root.untried=merged;
+  })();
+  // 상대 완성집(작은 상대 전용 빈 영역)에 헛되이 들어가는 수 제거 — 2집 못 내면 들어가지 않음
+  root.untried = root.untried.filter(m=>{
+    if(m[0]===-1) return true;
+    const opp=3-rootColor;
+    const seen=new Set(); const stack=[m[0]+m[1]*N]; let size=0; const bord=new Set(); let big=false;
+    while(stack.length){
+      const k=stack.pop(); if(seen.has(k))continue; seen.add(k);
+      const cx=k%N, cy=(k/N)|0; size++;
+      if(size>6){ big=true; break; }                 // 큰 영역이면 침입 허용
+      if(cx>0){const n=k-1; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
+      if(cx<N-1){const n=k+1; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
+      if(cy>0){const n=k-N; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
+      if(cy<N-1){const n=k+N; if(rootB[n]===EMPTY){if(!seen.has(n))stack.push(n);} else bord.add(rootB[n]);}
+    }
+    if(big || bord.size!==1 || !bord.has(opp)) return true;   // 작은 상대집이 아니면 허용
+    // 작은 상대집이어도 '공격적'(따냄/상대 단수)이면 허용, 순수 헛침입만 제거
+    const r=simulate(rootB,m[0],m[1],rootColor,rootKo);
+    if(!r.legal) return false;
+    if(r.captured.length>0) return true;                      // 따냄
+    for(const [nx,ny] of neighbors(m[0],m[1])){
+      if(r.b[idx(nx,ny)]===opp && group(r.b,nx,ny).libs===1) return true;  // 상대 단수 유발 → 공격 허용
+    }
+    return false;                                             // 순수 헛침입만 제거
+  });
+  // 종반엔 '착수 포기'도 후보에 — 이득 없으면 두지 않고 넘김
+  { let filled=0; for(let i=0;i<N*N;i++) if(rootB[i]!==EMPTY) filled++;
+    if(filled >= N*N*0.55 || root.untried.length===0) root.untried.push([-1,-1]); }
+  if(root.untried.length===0) return null;
+  const C=1.35, end=Date.now()+timeMs; let iter=0;
+  while(iter<minIter || Date.now()<end){
+    iter++;
+    let node=root; const path=[root];
+    // 선택
+    while(node.untried.length===0 && node.children.length>0){
+      const logN=Math.log(node.visits+1); let best=null,bu=-1e9;
+      for(const ch of node.children){
+        const wr=(node.toMove===BLACK)?(ch.bWins/ch.visits):(1-ch.bWins/ch.visits);
+        const u=wr + C*Math.sqrt(logN/ch.visits);
+        if(u>bu){bu=u;best=ch;}
+      }
+      node=best; path.push(node);
+    }
+    // 확장 (합법 수가 나올 때까지; 포기 후보 포함)
+    if(node.untried.length>0){
+      while(node.untried.length>0){
+        const m=node.untried.shift();
+        let child;
+        if(m[0]===-1){                                    // 착수 포기
+          child=mkNode(node.b, 3-node.toMove, null, m, false);
+        } else {
+          const r=simulate(node.b,m[0],m[1],node.toMove,node.ko);
+          if(!r.legal) continue;
+          child=mkNode(r.b,3-node.toMove,r.ko,m,false);
+        }
+        node.children.push(child); path.push(child); node=child; break;
+      }
+    }
+    // 시뮬레이션(빠른 플레이아웃)
+    const margin=fastPlayout(node.b,node.toMove);
+    const bScore = margin>0?1:(margin===0?0.5:0);
+    // 역전파
+    for(const nd of path){ nd.visits++; nd.bWins+=bScore; }
+    if(iter>500000) break;
+  }
+  if(root.children.length===0){
+    if(!root.untried.length) return null;
+    const m0=root.untried[0]; return (m0[0]===-1)?'pass':m0;
+  }
+  let best=root.children[0];
+  for(const ch of root.children) if(ch.visits>best.visits) best=ch;
+  return (best.move && best.move[0]===-1) ? 'pass' : best.move;
 }
 
 function chooseAI(b,color,ko,lv){
   const moves=legalMoves(b,color,ko);
   if(moves.length===0) return null;
 
-  // ── 초급: 약하게. 뻔한 따냄만 가끔 챙기고, 자충·자기 눈만 피해 나머지는 무작위 ──
+  // 세 단계 모두 MCTS(전술 플레이아웃) 기반 — 탐색량을 크게 키워 실력을 대폭 강화.
+  // 초급은 일부 확률로 무작위 실수를 섞어 초심자도 이길 여지를 남긴다.
   if(lv===1){
-    const caps=[], safe=[];
-    for(const m of moves){
-      const r=simulate(b,m[0],m[1],color,ko); if(!r.legal) continue;
-      if(r.captured.length>0) caps.push(m);
-      const selfAtari = r.captured.length===0 && group(r.b,m[0],m[1]).libs===1;
-      if(!isEyeLike(b,m[0],m[1],color) && !selfAtari) safe.push(m);
+    if(Math.random()<0.30){                          // 가끔 아무 데나(실수) — 초급다움 유지
+      const safe=moves.filter(m=>{const r=simulate(b,m[0],m[1],color,ko);return r.legal && !(r.captured.length===0&&group(r.b,m[0],m[1]).libs===1) && !isEyeLike(b,m[0],m[1],color);});
+      const pool=safe.length?safe:moves; return pool[(Math.random()*pool.length)|0];
     }
-    if(caps.length && Math.random()<0.5) return caps[(Math.random()*caps.length)|0];
-    const pool = safe.length? safe : moves;
-    return pool[(Math.random()*pool.length)|0];
+    const mv=mctsMove(b,color,ko,(N<=9?150:N<=13?200:250),12);
+    if(mv==='pass') return null;
+    return mv || moves[(Math.random()*moves.length)|0];
   }
-
-  // ── 중급: 착수 후 '내 집 우위'를 최대화하는 1수 평가 ──
   if(lv===2){
-    const cand=candidateMoves(b,color,ko, (N<=13)?10:8);
-    let best=cand[0], bestV=-1e9;
-    for(const m of cand){
-      const r=simulate(b,m[0],m[1],color,ko);
-      const v = evalBoard(r.b,color) + evalMove(b,m[0],m[1],color,ko)*0.06 + Math.random()*0.7;
-      if(v>bestV){ bestV=v; best=m; }
-    }
-    return best;
+    const mv=mctsMove(b,color,ko,(N<=9?900:N<=13?1100:1300),90);
+    if(mv==='pass') return null;
+    return mv || moves[(Math.random()*moves.length)|0];
   }
-
-  // ── 고급 ──
-  // 9·13줄: 몬테카를로 플레이아웃(실제 집으로 승부 → 사활·대마 감각). 19줄: 3수 미니맥스.
-  if(N<=13){
-    const sims = (N<=9)? 110 : 65;
-    const M    = (N<=9)? 16 : 12;
-    const mv = montecarloMove(b,color,ko,sims,M);
-    if(mv) return mv;
-  }
-  const depth=3;
-  const M = (N<=9)?12 : (N<=13)?10 : 8;   // 1차(지역) 후보 폭
-  const K = (N<=9)?5  : (N<=13)?4  : 3;   // 2차(세력) 탐색 폭
-  const opp=3-color;
-  const root=candidatesByArea(b,color,ko,M,K);
-  const results=[];
-  let bestV=-1e9;
-  for(const m of root){
-    const r=simulate(b,m[0],m[1],color,ko);
-    const v = -negamax(r.b,opp,r.ko,depth-1,-1e9,1e9,M,K);   // 루트는 정확값
-    results.push({m,v});
-    if(v>bestV) bestV=v;
-  }
-  const near=results.filter(o=>o.v>=bestV-0.5);            // 동률 근처는 무작위로 변화
-  return near[(Math.random()*near.length)|0].m;
+  // 고급 — 시간을 크게 늘려 최대한 강하게
+  const mv=mctsMove(b,color,ko,(N<=9?3000:N<=13?3500:4000),240);
+  if(mv==='pass') return null;
+  return mv || moves[(Math.random()*moves.length)|0];
 }
 
 /* ---------- 집 계산 ---------- */
