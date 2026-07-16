@@ -1,4 +1,4 @@
-const CACHE = 'baduk-v13';
+const CACHE = 'baduk-v15';
 const ASSETS = [
   './',
   './index.html',

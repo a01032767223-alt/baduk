@@ -1054,47 +1054,134 @@ function chooseAI(b,color,ko,lv){
 }
 
 /* ---------- 집 계산 ---------- */
-// ── 사활 판정: 자기만의 '작은 외눈(이어진 ≤3집)'으로 완전히 둘러싸인 그룹은 죽은 것 ──
-// (두 눈=분리된 두 집이면 삶으로 유지. 바깥 자유도/공유 자유도가 있으면 안전하게 건드리지 않음.)
-function findDeadStones(b){
-  const NN=N*N, dead=new Set();
-  const regId=new Int32Array(NN).fill(-1); const regions=[];
-  for(let i=0;i<NN;i++){
-    if(b[i]===EMPTY && regId[i]<0){
-      const id=regions.length; const stack=[i]; regId[i]=id; let size=0;
-      while(stack.length){ const c=stack.pop(); size++; const cx=c%N,cy=(c/N)|0;
-        for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===EMPTY && regId[n]<0){regId[n]=id; stack.push(n);} } }
-      regions.push({size, border:new Set()});
-    }
+// 1점 눈이 '진짜 눈'인지(거짓 눈이 아닌지) — 대각을 충분히 아군이 잡고 있어야 함
+function isRealEyePoint(b, P, color){
+  const x=P%N, y=(P/N)|0, opp=3-color; let onBoard=0, oppDiag=0;
+  for(const [dx,dy] of [[-1,-1],[1,-1],[-1,1],[1,1]]){
+    const nx=x+dx, ny=y+dy;
+    if(nx<0||nx>=N||ny<0||ny>=N) continue;        // 판 밖 = 아군이 잡은 셈
+    onBoard++; if(b[ny*N+nx]===opp) oppDiag++;
   }
+  const allow = (onBoard===4) ? 1 : 0;            // 중앙 1개까지 허용, 변/귀는 0
+  return oppDiag <= allow;
+}
+// ── 사활 판정 ──
+// 살아있는 그룹(진짜 두 눈)을 먼저 찾고, 다음 두 경우를 죽음으로 판정한다:
+//  (a) 자기 눈만으로 완전히 둘러싸였는데 진짜 두 눈이 안 되는 그룹
+//  (b) 눈이 없이 '살아있는 상대'에게 완전히 갇힌 그룹
+function findDeadStones(b){
+  const NN=N*N;
+  // 체인
+  const chainId=new Int32Array(NN).fill(-1); const chains=[]; const chainColor=[];
+  for(let i=0;i<NN;i++){ if(b[i]!==EMPTY && chainId[i]<0){
+    const c=b[i], id=chains.length, st=[], stk=[i]; chainId[i]=id;
+    while(stk.length){ const cur=stk.pop(); st.push(cur); const cx=cur%N,cy=(cur/N)|0;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===c&&chainId[n]<0){chainId[n]=id;stk.push(n);} } }
+    chains.push(st); chainColor.push(c);
+  }}
+  // 빈칸 영역 + 경계색
+  const regId=new Int32Array(NN).fill(-1); const regions=[];
+  for(let i=0;i<NN;i++){ if(b[i]===EMPTY && regId[i]<0){
+    const id=regions.length, pts=[], stk=[i]; regId[i]=id;
+    while(stk.length){ const c=stk.pop(); pts.push(c); const cx=c%N,cy=(c/N)|0;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===EMPTY&&regId[n]<0){regId[n]=id;stk.push(n);} } }
+    regions.push({pts,size:pts.length,border:new Set()});
+  }}
   for(let i=0;i<NN;i++){ if(b[i]===EMPTY){ const cx=i%N,cy=(i/N)|0;
     for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]!==EMPTY) regions[regId[i]].border.add(b[n]); } } }
-  const seen=new Uint8Array(NN);
-  for(let i=0;i<NN;i++){
-    if(b[i]!==EMPTY && !seen[i]){
-      const c=b[i]; const chain=[]; const stack=[i]; seen[i]=1; const adjReg=new Set();
-      while(stack.length){ const cur=stack.pop(); chain.push(cur); const cx=cur%N,cy=(cur/N)|0;
-        for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx;
-          if(b[n]===c && !seen[n]){seen[n]=1; stack.push(n);}
-          else if(b[n]===EMPTY){ adjReg.add(regId[n]); } } }
-      if(adjReg.size===0) continue;
-      let allPrivate=true; const privateEyes=[];
-      for(const rid of adjReg){ const reg=regions[rid];
-        if(reg.border.size===1 && reg.border.has(c)) privateEyes.push(reg); else allPrivate=false; }
-      if(!allPrivate) continue;                 // 바깥/공유 자유도 있음 → 죽음 아님
-      if(privateEyes.length>=2) continue;       // 두 눈 → 삶
-      if(privateEyes.length===1 && privateEyes[0].size<=3){
-        for(const s of chain) dead.add(s);      // 외눈(≤3집) 완전포위 → 죽음
-      }
-    }
+  // 체인별 진짜 눈 수 (한 색으로만 둘러싸인 영역에서)
+  const eyesOf=new Array(chains.length).fill(0);
+  for(const reg of regions){
+    if(reg.border.size!==1) continue;
+    const c=[...reg.border][0]; const bch=new Set();
+    for(const p of reg.pts){ const cx=p%N,cy=(p/N)|0;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===c) bch.add(chainId[n]); } }
+    const ev = reg.size===1 ? (isRealEyePoint(b,reg.pts[0],c)?1:0) : (reg.size<=5?1:2);
+    for(const cc of bch) eyesOf[cc]+=ev;
   }
+  const aliveMark=new Int8Array(NN);        // 진짜 두 눈 그룹 = 삶
+  for(let cid=0;cid<chains.length;cid++) if(eyesOf[cid]>=2) for(const s of chains[cid]) aliveMark[s]=chainColor[cid];
+
+  const dead=new Set();
+  // (a) 자기 눈만으로 완전포위 + 두 눈 불가
+  for(let cid=0;cid<chains.length;cid++){
+    const c=chainColor[cid]; const adj=new Set();
+    for(const s of chains[cid]){ const cx=s%N,cy=(s/N)|0;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===EMPTY) adj.add(regId[n]); } }
+    if(adj.size===0) continue;
+    let allPrivate=true;
+    for(const rid of adj){ if(!(regions[rid].border.size===1 && regions[rid].border.has(c))){ allPrivate=false; break; } }
+    if(allPrivate && eyesOf[cid]<2) for(const s of chains[cid]) dead.add(s);
+  }
+  // (b) 살아있는 상대에게 갇힌 그룹 — 갇힌 빈 공간이 작아 두 눈을 못 낼 때만(과잉판정 방지)
+  const seen=new Uint8Array(NN);
+  for(let i=0;i<NN;i++){ if(aliveMark[i]===0 && !seen[i]){
+    const pts=[], stk=[i]; seen[i]=1; const bord=new Set();
+    while(stk.length){ const c=stk.pop(); pts.push(c); const cx=c%N,cy=(c/N)|0;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx;
+        if(aliveMark[n]===0){ if(!seen[n]){seen[n]=1;stk.push(n);} } else bord.add(aliveMark[n]); } }
+    if(bord.size===1){ const c=[...bord][0], opp=3-c;
+      let emptyCount=0; for(const p of pts) if(b[p]===EMPTY) emptyCount++;
+      if(emptyCount<=6){ for(const p of pts){ if(b[p]===opp) dead.add(p); } }   // 두 눈 낼 공간 없음 → 죽음
+    }
+  }}
   return dead;
 }
 
+// ── Benson의 무조건 삶(unconditional life): 진짜 두 눈을 가진 그룹만 '삶'으로 판정 ──
+// (거짓 눈·나카데·연결관계를 정확히 처리. 반환: 산 돌 인덱스 Set)
+function bensonAlive(b, color){
+  const NN=N*N;
+  const chainId=new Int32Array(NN).fill(-1); const chains=[];
+  for(let i=0;i<NN;i++){
+    if(b[i]===color && chainId[i]<0){
+      const id=chains.length; const st=[]; const stk=[i]; chainId[i]=id;
+      while(stk.length){ const c=stk.pop(); st.push(c); const cx=c%N,cy=(c/N)|0;
+        for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===color && chainId[n]<0){chainId[n]=id; stk.push(n);} } }
+      chains.push(st);
+    }
+  }
+  const regId=new Int32Array(NN).fill(-1); const regions=[];
+  for(let i=0;i<NN;i++){
+    if(b[i]!==color && regId[i]<0){
+      const id=regions.length; const pts=[]; const stk=[i]; regId[i]=id;
+      while(stk.length){ const c=stk.pop(); pts.push(c); const cx=c%N,cy=(c/N)|0;
+        for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]!==color && regId[n]<0){regId[n]=id; stk.push(n);} } }
+      regions.push({points:pts, empties:[], borderChains:new Set()});
+    }
+  }
+  for(const reg of regions){
+    for(const p of reg.points){ if(b[p]===EMPTY) reg.empties.push(p);
+      const cx=p%N,cy=(p/N)|0;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===color) reg.borderChains.add(chainId[n]); } }
+  }
+  function vital(reg,cid){                        // 영역의 모든 빈점이 이 체인에 인접 = 진짜 눈
+    if(reg.empties.length===0) return false;
+    for(const ep of reg.empties){ const cx=ep%N,cy=(ep/N)|0; let adj=false;
+      for(const [nx,ny] of neighbors(cx,cy)){ const n=ny*N+nx; if(b[n]===color && chainId[n]===cid){adj=true;break;} }
+      if(!adj) return false; }
+    return true;
+  }
+  const chainAlive=chains.map(()=>true); const regionOK=regions.map(()=>true);
+  let changed=true;
+  while(changed){ changed=false;
+    for(let r=0;r<regions.length;r++){ if(!regionOK[r]) continue;
+      for(const cid of regions[r].borderChains){ if(!chainAlive[cid]){ regionOK[r]=false; changed=true; break; } } }
+    for(let cid=0;cid<chains.length;cid++){ if(!chainAlive[cid]) continue;
+      let cnt=0;
+      for(let r=0;r<regions.length;r++){ if(regionOK[r] && regions[r].borderChains.has(cid) && vital(regions[r],cid)) cnt++; }
+      if(cnt<2){ chainAlive[cid]=false; changed=true; } }
+  }
+  const alive=new Set();
+  for(let cid=0;cid<chains.length;cid++) if(chainAlive[cid]) for(const s of chains[cid]) alive.add(s);
+  return alive;
+}
+
+// 계가(중국식 area): 죽은 그룹 제거 후 산 돌+집 계산. owner/dead 반환.
 function score(){
   const b=board.slice();
   const dead=findDeadStones(b);
-  for(const k of dead) b[k]=EMPTY;                // 죽은 돌 제거 → 상대 집으로 산정
+  for(const k of dead) b[k]=EMPTY;                // 죽은 돌 제거 → 상대 집·돌로 산정
   let bs=0,ws=0,bt=0,wt=0;
   const seen=new Array(N*N).fill(false);
   const owner=new Int8Array(N*N);                 // 0 미정, 1 흑집, 2 백집 (죽은돌 자리 포함)
@@ -1127,7 +1214,7 @@ function score(){
    집계는 중국식 area 방식: 예상집 = 자기 돌 수 + 자기 세력권 + (백은 덤).      */
 function estimateScore(){
   const b=board.slice();
-  for(const k of findDeadStones(b)) b[k]=EMPTY;   // 죽은 그룹 제거 후 세력 계산
+  for(const k of score().dead) b[k]=EMPTY;        // Benson 기준 죽은 돌 제거 후 세력 계산
   const owner=new Int8Array(N*N);           // 0 미정, 1 흑, 2 백
   const stones=[];
   let bStones=0, wStones=0;
